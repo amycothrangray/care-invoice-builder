@@ -1,3 +1,41 @@
-# Sitterwise Care.com Invoice Builder
+# Sitterwise · Care.com Invoice Builder
 
-Drop the two monthly exports, answer the judgment calls, download the finished invoice. Everything runs in the browser - the spreadsheets never leave your computer.
+Drop the two monthly exports, answer the judgment calls, download the finished
+invoice — official template layout, live formulas, full formatting.
+
+Everything runs in the browser. The spreadsheets never leave your computer.
+
+## Deploy to Netlify (about 60 seconds)
+
+1. Go to https://app.netlify.com/drop (log in if asked)
+2. Drag this whole folder onto the page
+3. Netlify gives you a URL — that's the app. Bookmark it.
+
+To update later: drag the folder onto the same site's "Deploys" page.
+
+## Using it each month
+
+1. **Upload** the Care.com export (`CareAtWorkBackupCareJobs…xlsx`) and the
+   bookings export (`bookings-Month-Year.xlsx`)
+2. **Answer the questions** — the app applies every rule automatically
+   (CA daily overtime, 4-hour minimum, weekly-OT check, reassignment-shadow
+   and couldn't-fill exclusion, multi-day cancellation grouping) and only
+   asks about the true judgment calls:
+   - rate / mileage rate / invoice number (pre-filled, editable)
+   - any client names it couldn't match
+   - which mileage reimbursements to include, and the billable miles
+   - how to bill each cancellation (>24hr flat · <24hr hours · no charge)
+3. **Download** the .xlsx and send it to Care.com yourself.
+
+The receipt tape on the right shows the running total as you answer.
+The spreadsheet's own formulas do the final math.
+
+## Rules baked in
+
+- $42/hr regular · 1.5× CA overtime over 8 hrs/day (rate editable)
+- 4-hour minimum on short bookings
+- Mileage over 40-mile round trip at $0.76/mi (rate editable)
+- Cancellations: $30 flat for >24 hr notice; booked hours (capped at 8) at the
+  hourly rate for <24 hr; one fee for multi-day or double-staffed bookings
+- Bonuses from the Care.com export, never duplicated onto overtime lines
+- Tips are never billed to Care.com (flagged for OnPay instead)

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sitterwise · Care.com Invoice Builder</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --navy:#16324A; --navy-deep:#0E2233; --coral:#E4643B; --coral-dark:#C74E2A;
+  --paper:#F4F6F8; --card:#FFFFFF; --ink:#1B2733; --muted:#5B6B7A;
+  --salmon:#FFCCCC; --salmon-deep:#F5B8B8; --line:#DCE3E9; --green:#2E7D5B;
+  --amber:#B07C1F; --red:#B3372B;
+  --mono:'IBM Plex Mono',monospace; --body:'Public Sans',sans-serif; --disp:'Fraunces',serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--body);background:var(--paper);color:var(--ink);font-size:15px;line-height:1.55}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+
+/* ---------- header ---------- */
+header{background:var(--navy);color:#fff;padding:34px 0 30px;position:relative;overflow:hidden}
+header::after{content:"";position:absolute;right:-40px;top:-40px;width:280px;height:280px;border-radius:50%;
+  background:radial-gradient(circle at 30% 30%, rgba(228,100,59,.25), transparent 65%)}
+.hd-eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--salmon)}
+h1{font-family:var(--disp);font-weight:700;font-size:clamp(26px,3.4vw,38px);margin:6px 0 4px}
+.hd-sub{color:#C9D5DF;max-width:640px}
+.steps{display:flex;gap:0;margin-top:22px;border:1px solid rgba(255,255,255,.25);border-radius:10px;overflow:hidden;width:fit-content}
+.step{padding:8px 18px;font-family:var(--mono);font-size:12.5px;letter-spacing:.05em;color:#9FB2C0;background:transparent;display:flex;gap:8px;align-items:center;border-right:1px solid rgba(255,255,255,.18)}
+.step:last-child{border-right:none}
+.step.active{background:var(--coral);color:#fff}
+.step.done{color:#fff}
+.step .n{width:18px;height:18px;border-radius:50%;border:1.5px solid currentColor;display:inline-flex;align-items:center;justify-content:center;font-size:10.5px}
+.step.done .n{background:#fff;color:var(--navy);border-color:#fff}
+
+/* ---------- layout ---------- */
+.main{display:grid;grid-template-columns:1fr 264px;gap:28px;padding:30px 0 80px;align-items:start}
+@media(max-width:900px){.main{grid-template-columns:1fr}.tape-wrap{position:static!important;order:-1}}
+
+/* ---------- receipt tape ---------- */
+.tape-wrap{position:sticky;top:18px}
+.tape{background:#fff;border:1px solid var(--line);border-radius:2px;box-shadow:0 10px 24px rgba(22,50,74,.10);font-family:var(--mono);position:relative}
+.tape::before,.tape::after{content:"";position:absolute;left:0;right:0;height:8px;
+  background:radial-gradient(circle at 6px -2px, transparent 6px, #fff 6.5px);background-size:14px 8px;background-repeat:repeat-x}
+.tape::before{top:-7px;transform:rotate(180deg)}
+.tape::after{bottom:-7px}
+.tape-head{padding:14px 16px 8px;border-bottom:1px dashed var(--line)}
+.tape-head .t1{font-size:11px;letter-spacing:.16em;color:var(--muted);text-transform:uppercase}
+.tape-head .t2{font-size:13.5px;font-weight:600;color:var(--navy)}
+.tape-body{padding:10px 16px}
+.trow{display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;color:var(--ink)}
+.trow .lbl{color:var(--muted)}
+.trow.subtle{opacity:.45}
+.tape-total{border-top:1.5px solid var(--navy);margin-top:8px;padding:10px 16px 14px;display:flex;justify-content:space-between;align-items:baseline}
+.tape-total .lbl{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.tape-total .amt{font-size:20px;font-weight:600;color:var(--navy)}
+.tape-note{padding:0 16px 14px;font-size:10.5px;color:var(--muted);line-height:1.5}
+
+/* ---------- cards ---------- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:26px 28px;margin-bottom:22px}
+.card h2{font-family:var(--disp);font-size:21px;color:var(--navy);margin-bottom:4px;display:flex;align-items:center;gap:10px}
+.card h2 .badge{font-family:var(--mono);font-size:11px;font-weight:500;background:var(--salmon);color:var(--navy);
+  padding:2px 9px;border-radius:20px;letter-spacing:.06em}
+.card .sub{color:var(--muted);font-size:13.5px;margin-bottom:18px;max-width:660px}
+.card.locked{opacity:.45;pointer-events:none}
+
+/* uploads */
+.drops{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:700px){.drops{grid-template-columns:1fr}}
+.drop{border:1.5px dashed #B9C6D1;border-radius:10px;padding:22px 18px;text-align:center;cursor:pointer;transition:all .15s;background:#FBFCFD}
+.drop:hover{border-color:var(--coral)}
+.drop.filled{border-style:solid;border-color:var(--green);background:#F2F8F5}
+.drop .ic{font-size:22px}
+.drop .dt{font-weight:600;color:var(--navy);margin-top:6px;font-size:14px}
+.drop .dd{font-size:12px;color:var(--muted);margin-top:3px}
+.drop .fname{font-family:var(--mono);font-size:11.5px;color:var(--green);margin-top:8px;word-break:break-all}
+.drop input{display:none}
+
+/* buttons */
+.btn{font-family:var(--body);font-weight:600;font-size:14.5px;border:none;border-radius:8px;padding:12px 26px;cursor:pointer;transition:all .15s}
+.btn-primary{background:var(--coral);color:#fff}
+.btn-primary:hover{background:var(--coral-dark)}
+.btn-primary:disabled{background:#C8D2DA;cursor:not-allowed}
+.btn-ghost{background:transparent;color:var(--navy);border:1.5px solid var(--line)}
+.btn-ghost:hover{border-color:var(--navy)}
+.btn-row{display:flex;gap:12px;margin-top:20px;align-items:center}
+.hint{font-size:12.5px;color:var(--muted)}
+
+/* analysis summary chips */
+.chips{display:flex;flex-wrap:wrap;gap:9px;margin:14px 0 4px}
+.chip{font-family:var(--mono);font-size:12px;background:#EEF2F5;border:1px solid var(--line);border-radius:20px;padding:5px 13px;color:var(--ink)}
+.chip b{color:var(--navy)}
+.chip.warn{background:#FBF3E2;border-color:#E7D5AC;color:var(--amber)}
+.chip.good{background:#F0F7F3;border-color:#CBE3D6;color:var(--green)}
+
+/* settings grid */
+.set-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-top:6px}
+.field label{display:block;font-size:11.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+.field input,.field select{width:100%;font-family:var(--mono);font-size:14px;padding:9px 11px;border:1.5px solid var(--line);border-radius:7px;background:#fff;color:var(--ink)}
+.field input:focus,.field select:focus{outline:none;border-color:var(--coral)}
+.field .note{font-size:11px;color:var(--muted);margin-top:4px}
+
+/* tables of questions */
+table.q{width:100%;border-collapse:collapse;margin-top:10px;font-size:13.5px}
+table.q th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);text-align:left;
+  padding:8px 10px;border-bottom:1.5px solid var(--line);font-weight:600}
+table.q td{padding:9px 10px;border-bottom:1px solid #EDF1F4;vertical-align:middle}
+table.q tr:last-child td{border-bottom:none}
+table.q .mono{font-family:var(--mono);font-size:12.5px}
+table.q select,table.q input[type=text],table.q input[type=number]{font-family:var(--mono);font-size:12.5px;padding:6px 8px;border:1.5px solid var(--line);border-radius:6px;background:#fff;max-width:100%}
+table.q select:focus,table.q input:focus{outline:none;border-color:var(--coral)}
+.salrow{background:#FFF6F6}
+.pill{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:12px;letter-spacing:.04em}
+.pill.skip{background:#EEF2F5;color:var(--muted)}
+.pill.multi{background:var(--salmon);color:var(--navy)}
+.pill.less{background:#FBE9E5;color:var(--red)}
+.excl{margin-top:14px;border-top:1px dashed var(--line);padding-top:12px}
+.excl summary{cursor:pointer;font-size:12.5px;color:var(--muted);font-weight:600}
+.excl ul{margin:8px 0 0 18px;font-size:12.5px;color:var(--muted)}
+.excl li{margin:3px 0}
+
+/* download */
+.dl-zone{text-align:center;padding:16px 0 6px}
+.dl-zone .big{font-family:var(--disp);font-size:26px;color:var(--navy)}
+.dl-zone .tot{font-family:var(--mono);font-size:34px;font-weight:600;color:var(--coral);margin:8px 0 2px}
+.dl-zone .fn{font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:18px}
+.err{background:#FBE9E5;border:1px solid #EFC4BB;color:var(--red);border-radius:8px;padding:12px 16px;font-size:13.5px;margin-top:14px;display:none}
+footer{padding:26px 0 40px;color:var(--muted);font-size:12px;text-align:center}
+footer b{color:var(--navy)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="hd-eyebrow">Sitterwise, Inc. · Corporate — Invoiced</div>
+    <h1>Care.com Invoice Builder</h1>
+    <p class="hd-sub">Drop the two monthly exports, answer the judgment calls, and download the finished invoice — official template, live formulas, salmon columns and all.</p>
+    <div class="steps" id="steps">
+      <div class="step active" data-step="1"><span class="n">1</span> Upload exports</div>
+      <div class="step" data-step="2"><span class="n">2</span> Answer questions</div>
+      <div class="step" data-step="3"><span class="n">3</span> Download invoice</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="main">
+<div class="col-main">
+
+  <!-- STEP 1 -->
+  <section class="card" id="card-upload">
+    <h2>The two exports <span class="badge">step 1</span></h2>
+    <p class="sub">Same two files as every month. The Care.com export is the billing source of truth (jobs + bonuses); the bookings export supplies client names, mileage, and cancellations.</p>
+    <div class="drops">
+      <label class="drop" id="drop-care">
+        <div class="ic">🗂️</div>
+        <div class="dt">Care.com export</div>
+        <div class="dd">CareAtWorkBackupCareJobs…xlsx — the "Done" jobs list</div>
+        <div class="fname" id="fname-care"></div>
+        <input type="file" id="file-care" accept=".xlsx,.xls,.csv">
+      </label>
+      <label class="drop" id="drop-book">
+        <div class="ic">📒</div>
+        <div class="dt">Bookings export</div>
+        <div class="dd">bookings-Month-Year.xlsx — the Sitterwise operational export</div>
+        <div class="fname" id="fname-book"></div>
+        <input type="file" id="file-book" accept=".xlsx,.xls,.csv">
+      </label>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btn-analyze" disabled>Read the files</button>
+      <span class="hint">Everything runs in your browser — the files never leave your computer.</span>
+    </div>
+    <div class="err" id="err-upload"></div>
+  </section>
+
+  <!-- STEP 2 -->
+  <section class="card locked" id="card-questions">
+    <h2>Judgment calls <span class="badge">step 2</span></h2>
+    <p class="sub" id="analysis-sub">Upload the files first.</p>
+    <div class="chips" id="chips"></div>
+
+    <div id="q-settings" style="display:none">
+      <h3 style="font-size:14px;color:var(--navy);margin:18px 0 8px">Rates &amp; invoice details</h3>
+      <div class="set-grid">
+        <div class="field"><label>Invoice #</label><input id="set-invnum" type="text"></div>
+        <div class="field"><label>Hourly rate</label><input id="set-rate" type="number" step="0.01" value="42.00"><div class="note">OT bills at 1.5×</div></div>
+        <div class="field"><label>Mileage rate / mi</label><input id="set-mile" type="number" step="0.001" value="0.76"><div class="note">Over 40-mi round trip</div></div>
+        <div class="field"><label>Cancellation flat fee</label><input id="set-cancfee" type="number" step="0.01" value="30.00"><div class="note">For &gt;24 hr notice</div></div>
+      </div>
+    </div>
+
+    <div id="q-clients" style="display:none">
+      <h3 style="font-size:14px;color:var(--navy);margin:22px 0 2px">Missing client names</h3>
+      <p class="sub" style="margin-bottom:4px">These Care.com jobs had no clean match in the bookings file. Fill in the client, or leave the placeholder.</p>
+      <table class="q" id="tbl-clients"></table>
+    </div>
+
+    <div id="q-mileage" style="display:none">
+      <h3 style="font-size:14px;color:var(--navy);margin:22px 0 2px">Mileage</h3>
+      <p class="sub" style="margin-bottom:4px">Jobs on this invoice with a mileage reimbursement in the bookings file. Confirm billable miles (miles over the 40-mile round trip).</p>
+      <table class="q" id="tbl-mileage"></table>
+    </div>
+
+    <div id="q-canc" style="display:none">
+      <h3 style="font-size:14px;color:var(--navy);margin:22px 0 2px">Cancellations</h3>
+      <p class="sub" style="margin-bottom:4px">Reassignment shadows and unfilled jobs are already excluded. Set how each billable cancellation should be charged — consecutive-day bookings for the same client are flagged for a possible single fee.</p>
+      <table class="q" id="tbl-canc"></table>
+      <details class="excl" id="excl-details"><summary>What was excluded automatically</summary><ul id="excl-list"></ul></details>
+    </div>
+
+    <div class="btn-row" id="q-actions" style="display:none">
+      <button class="btn btn-primary" id="btn-build">Build the invoice</button>
+      <span class="hint">You can change any answer and rebuild.</span>
+    </div>
+    <div class="err" id="err-build"></div>
+  </section>
+
+  <!-- STEP 3 -->
+  <section class="card locked" id="card-download">
+    <h2>Your invoice <span class="badge">step 3</span></h2>
+    <div class="dl-zone" id="dl-zone" style="display:none">
+      <div class="big">Ready to send.</div>
+      <div class="tot" id="dl-total"></div>
+      <div class="fn" id="dl-fname"></div>
+      <button class="btn btn-primary" id="btn-download">Download the .xlsx</button>
+      <p class="hint" style="margin-top:14px">Official template layout · live formulas · full formatting. Review it, then send it to Care.com yourself.</p>
+    </div>
+  </section>
+
+</div>
+
+<!-- receipt tape -->
+<div class="tape-wrap">
+  <div class="tape" aria-live="polite">
+    <div class="tape-head">
+      <div class="t1">Running total</div>
+      <div class="t2" id="tape-month">— — —</div>
+    </div>
+    <div class="tape-body">
+      <div class="trow subtle" id="tr-reg"><span class="lbl">Regular hrs</span><span class="amt">—</span></div>
+      <div class="trow subtle" id="tr-ot"><span class="lbl">CA overtime</span><span class="amt">—</span></div>
+      <div class="trow subtle" id="tr-bonus"><span class="lbl">Bonuses</span><span class="amt">—</span></div>
+      <div class="trow subtle" id="tr-miles"><span class="lbl">Mileage</span><span class="amt">—</span></div>
+      <div class="trow subtle" id="tr-canc"><span class="lbl">Cancellations</span><span class="amt">—</span></div>
+    </div>
+    <div class="tape-total"><span class="lbl">Invoice total</span><span class="amt" id="tape-total">$0.00</span></div>
+    <div class="tape-note">Updates live as you answer. Final math is computed by the formulas inside the spreadsheet itself.</div>
+  </div>
+</div>
+
+</div>
+</div>
+
+<footer><b>Sitterwise · Care.com Invoice Builder</b> · runs entirely in your browser · nothing is uploaded anywhere</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

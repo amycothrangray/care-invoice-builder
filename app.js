@@ -7,7 +7,7 @@
 "use strict";
 
 const S = {
-  careFile: null, bookFile: null,
+  careFile: null, bookFile: null, milFile: null,
   jobs: [],            // completed Care.com jobs
   cancBillable: [],    // billable cancellations (with UI decisions)
   cancExcluded: [],    // {why, label}
@@ -15,10 +15,16 @@ const S = {
   mileageCand: [],     // mileage candidates on the invoice
   month: null, year: null,
   weeklyOTWarn: [],
+  adminNotes: [],      // internal guidance only — never written to the invoice
+  dblBill: [],         // completed jobs that may duplicate a billed cancellation
+  milSkipped: [],      // mileage form entries that don't belong on this invoice
+  milSource: "none",   // "form" (Cognito export) or "reimb" (estimated fallback)
+  excludeJobs: new Set(), // completed Care jobs excluded from the invoice (not actually worked)
   built: null,         // {blob, filename, total}
 };
 
 const $ = id => document.getElementById(id);
+const esc = s => String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const money = n => "$" + n.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
@@ -41,6 +47,7 @@ function wireDrop(dropId, inputId, nameId, key) {
 }
 wireDrop("drop-care","file-care","fname-care","careFile");
 wireDrop("drop-book","file-book","fname-book","bookFile");
+wireDrop("drop-mil","file-mil","fname-mil","milFile");
 
 function readWB(file) {
   return new Promise((res, rej) => {
@@ -98,8 +105,8 @@ function isoWeek(dstr){ const d=new Date(dstr+"T12:00:00"); const t=new Date(d);
 $("btn-analyze").addEventListener("click", async () => {
   const errBox = $("err-upload"); errBox.style.display="none";
   try {
-    const [careWB, bookWB] = await Promise.all([readWB(S.careFile), readWB(S.bookFile)]);
-    analyze(careWB, bookWB);
+    const [careWB, bookWB, milWB] = await Promise.all([readWB(S.careFile), readWB(S.bookFile), S.milFile ? readWB(S.milFile) : Promise.resolve(null)]);
+    analyze(careWB, bookWB, milWB);
   } catch(e) {
     errBox.textContent = "Couldn't read the files: " + e.message + " — make sure these are the two monthly .xlsx exports.";
     errBox.style.display = "block";
@@ -111,7 +118,25 @@ function sheetRows(wb) {
   return XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:null});
 }
 
-function analyze(careWB, bookWB) {
+function parseMileageForm(wb) {
+  const rows = sheetRows(wb);
+  if (!rows.length) return [];
+  const hdr = rows[0].map(h => String(h||"").toLowerCase());
+  const find = re => hdr.findIndex(h => re.test(h));
+  const jc = find(/job/), nc = find(/name/), oc = find(/over/), tc = find(/total number|number of miles/), ac = find(/amount/);
+  if (jc === -1) throw new Error('mileage file: no "Care.com Job #" column found — is this the mileage request export?');
+  const out = [];
+  for (let i=1;i<rows.length;i++){
+    const r = rows[i]; if (!r || r[jc]==null || String(r[jc]).trim()==="") continue;
+    const total = tc>-1 ? money2num(r[tc]) : 0;
+    let over = oc>-1 ? money2num(r[oc]) : 0;
+    if (!over && total) over = Math.max(Math.round(total-40), 0);
+    out.push({ job:String(r[jc]).trim(), name: nc>-1?cleanName(r[nc]):"", over, total, amt: ac>-1?money2num(r[ac]):0 });
+  }
+  return out;
+}
+
+function analyze(careWB, bookWB, milWB) {
   const care = sheetRows(careWB);
   const book = sheetRows(bookWB);
 
@@ -131,6 +156,7 @@ function analyze(careWB, bookWB) {
       hrs: money2num(r[bc("Total Hours")]),
       cg: cleanName(r[bc("Caregiver Name")]), status: String(r[bc("Status")]||"").trim().toLowerCase(),
       reimb: money2num(r[bc("Reimbursement")]), tip: money2num(r[bc("Tip")]),
+      note: bc("Admin Notes") !== -1 ? String(r[bc("Admin Notes")] ?? "").trim() : "",
     });
   }
   const corp = bRows.filter(r => r.svc === "Corporate (Invoiced)");
@@ -185,19 +211,49 @@ function analyze(careWB, bookWB) {
   const ym = Object.entries(mc).sort((a,b)=>b[1]-a[1])[0][0];
   S.year = parseInt(ym.slice(0,4)); S.month = parseInt(ym.slice(5,7));
 
-  // mileage candidates: corporate bookings with reimb>0 that correspond to a Care job (cg first name + date)
+  // mileage: the caregiver mileage-request form export is the source of truth.
   const mileageCand = [];
   const mileageOffInvoice = [];
-  for (const r of corp) {
-    if (r.reimb > 0) {
-      const match = jobs.find(j => j.date===r.date && (firstName(j.cg)===firstName(r.cg) || firstName(j.cg).slice(0,4)===firstName(r.cg).slice(0,4)));
-      if (match) mileageCand.push({ jid: match.jid, cg: match.cg, client: r.client, date: r.date, reimb: r.reimb, miles: Math.round(r.reimb/0.725), include: true });
-      else mileageOffInvoice.push(r);
+  S.milSkipped = [];
+  const milEntries = milWB ? parseMileageForm(milWB) : null;
+  if (milEntries) {
+    S.milSource = "form";
+    const byJid = new Map(jobs.map(j=>[j.jid, j]));
+    const bkMap = new Map(bRows.map(r=>[String(r.bk), r]));
+    const seenJid = new Set();
+    for (const e of milEntries) {
+      let j = byJid.get(e.job), how = "";
+      if (!j) {
+        const bkr = bkMap.get(e.job);
+        if (bkr) {
+          if (bkr.svc !== "Corporate (Invoiced)") { S.milSkipped.push(`${e.name} — #${e.job} is a ${bkr.svc} booking (Sitterwise-side reimbursement, not a Care.com invoice item)`); continue; }
+          j = jobs.find(x => x.date===bkr.date && (firstName(x.cg)===firstName(bkr.cg) || firstName(x.cg).slice(0,4)===firstName(bkr.cg).slice(0,4)));
+          how = ` (matched from Sitterwise booking #${e.job})`;
+          if (!j) { S.milSkipped.push(`${e.name} — booking #${e.job} (${bkr.client||""} ${bkr.date||""}) has no completed Care.com job this month — cancelled or not on this invoice`); continue; }
+        } else { S.milSkipped.push(`${e.name} — job ${e.job} isn't on this month's Care.com export (likely next month's invoice, or already billed)`); continue; }
+      }
+      if (seenJid.has(j.jid)) continue; // duplicate submission for the same job
+      seenJid.add(j.jid);
+      mileageCand.push({ jid: j.jid, cg: j.cg, client: j.client, date: j.date, reimb: e.amt, miles: e.over,
+        include: !(j.bonus > 0), conflict: j.bonus > 0, src: "form"+how, note: "" });
+    }
+  } else {
+    // fallback (no form uploaded): estimate from the bookings Reimbursement column
+    S.milSource = "reimb";
+    for (const r of corp) {
+      if (r.reimb > 0) {
+        const match = jobs.find(j => j.date===r.date && (firstName(j.cg)===firstName(r.cg) || firstName(j.cg).slice(0,4)===firstName(r.cg).slice(0,4)));
+        if (match) mileageCand.push({ jid: match.jid, cg: match.cg, client: r.client, date: r.date, reimb: r.reimb, miles: Math.round(r.reimb/0.76), include: !(match.bonus > 0), conflict: match.bonus > 0, src: "estimated from reimbursement — upload the mileage form export for exact figures", note: r.note || "" });
+        else mileageOffInvoice.push(r);
+      }
     }
   }
 
   // tips on corporate jobs → warn (OnPay, never the invoice)
   const tips = corp.filter(r => r.tip > 0);
+
+  // admin notes across all corporate rows (guidance only — never written to the invoice)
+  S.adminNotes = corp.filter(r => r.note).map(r => ({ client:r.client, date:r.date, cg:r.cg, status:r.status, note:r.note }));
 
   // ---- cancellations ----
   const paidKeys = new Set(corp.filter(r=>["paid","completed","confirmed"].includes(r.status)).map(r=>r.client+"|"+r.date+"|"+r.start));
@@ -227,7 +283,14 @@ function analyze(careWB, bookWB) {
       if ((d2-d1)/86400000 === 1) { cur._g = prev._g ?? (prev._g = ++gid); continue; }
     }
   }
-  S.cancBillable = billable.map(r => ({ bk:String(r.bk), client:r.client, date:r.date, hrs:r.hrs||0, cg:r.cg, group:r._g||null, mode:">24" }));
+  S.cancBillable = billable.map(r => ({ bk:String(r.bk), client:r.client, date:r.date, hrs:r.hrs||0, cg:r.cg, group:r._g||null, mode:">24", note:r.note||"" }));
+  // double-bill check: a billable cancellation whose caregiver ALSO has a completed
+  // Care.com job the same day usually means the same shift is on the invoice twice.
+  S.dblBill = [];
+  for (const c of S.cancBillable) {
+    const hit = jobs.find(j => j.date===c.date && firstName(j.cg)===firstName(c.cg));
+    if (hit) { c.dbl = hit.jid; if (!S.dblBill.some(d=>d.jid===hit.jid)) S.dblBill.push({jid:hit.jid, cg:hit.cg, client:c.client, date:c.date}); }
+  }
   S.cancExcluded = excluded;
   S.jobs = jobs; S.unmatched = unmatched; S.mileageCand = mileageCand;
 
@@ -261,6 +324,9 @@ function renderQuestions(extra) {
     extra.tips.length ? `<span class="chip warn">⚠ ${extra.tips.length} tip(s) on corporate jobs — left OFF the invoice (route via OnPay)</span>` : "",
     extra.mileageOffInvoice.length ? `<span class="chip warn">${extra.mileageOffInvoice.length} mileage reimbursement(s) on jobs NOT in the Care export — excluded</span>` : "",
     S.jobs.some(j=>j.oddId) ? `<span class="chip warn">⚠ non-standard job ID: ${S.jobs.filter(j=>j.oddId).map(j=>j.jid).join(", ")} — confirm it's legit</span>` : "",
+    S.milSource==="form" ? `<span class="chip good">🚗 mileage form loaded: ${S.mileageCand.length} matched, ${S.milSkipped.length} skipped</span>` : `<span class="chip warn">no mileage form uploaded \u2014 mileage below is estimated from reimbursements</span>`,
+    S.dblBill.length ? `<span class="chip warn">⚠ ${S.dblBill.length} possible double-bill(s): a billed cancellation's caregiver also has a completed job that day — see below</span>` : "",
+    S.adminNotes.length ? `<span class="chip note">📝 ${S.adminNotes.length} admin note(s) in the bookings file — shown next to the calls below</span>` : "",
   ].filter(Boolean).join("");
   $("chips").innerHTML = chips;
 
@@ -271,40 +337,67 @@ function renderQuestions(extra) {
   if (S.unmatched.length) {
     $("q-clients").style.display = "block";
     $("tbl-clients").innerHTML = `<tr><th>Job</th><th>Date</th><th>Caregiver</th><th>Client name</th></tr>` +
-      S.unmatched.map((j,i)=>`<tr><td class="mono">${j.jid}</td><td class="mono">${j.date.slice(5)}</td><td>${j.cg}</td>
-        <td><input type="text" data-uidx="${i}" class="inp-client" value="" placeholder="Care.com Family" style="width:200px"></td></tr>`).join("");
+      S.unmatched.map((j,i)=>{
+        const n = S.adminNotes.find(a=>a.date===j.date && a.cg && j.cg && a.cg.split(" ")[0].toLowerCase()===j.cg.split(" ")[0].toLowerCase());
+        return `<tr><td class="mono">${j.jid}</td><td class="mono">${j.date.slice(5)}</td><td>${j.cg}</td>
+        <td><input type="text" data-uidx="${i}" class="inp-client" value="" placeholder="Care.com Family" style="width:200px"></td></tr>${n?`<tr><td colspan="4" class="adminnote">📝 ${esc(n.note)}</td></tr>`:""}`;
+      }).join("");
   } else $("q-clients").style.display = "none";
 
   // mileage
-  if (S.mileageCand.length) {
+  if (S.mileageCand.length || S.milSkipped.length) {
     $("q-mileage").style.display = "block";
-    $("tbl-mileage").innerHTML = `<tr><th>Include</th><th>Job</th><th>Caregiver</th><th>Date</th><th>System reimb.</th><th>Billable miles</th></tr>` +
-      S.mileageCand.map((m,i)=>`<tr class="salrow">
-        <td><input type="checkbox" data-midx="${i}" class="inp-minc" checked></td>
+    $("tbl-mileage").innerHTML = `<tr><th>Include</th><th>Job</th><th>Caregiver</th><th>Date</th><th>Miles over 40 RT</th><th>Status</th></tr>` +
+      S.mileageCand.map((m,i)=>{
+        const st = m.conflict
+          ? `<span class="pill less" title="Care.com does not pay mileage AND a bonus on the same job unless both are pre-approved.">\u26a0 $50 bonus on this job \u2014 pick one</span>`
+          : (S.milSource==="form" ? `<span class="pill multi">\u2713 form submission</span>` : `<span class="pill skip">estimate \u2014 verify</span>`);
+        return `<tr class="salrow">
+        <td><input type="checkbox" data-midx="${i}" class="inp-minc"${m.include?" checked":""}></td>
         <td class="mono">${m.jid}</td><td>${m.cg}</td><td class="mono">${m.date.slice(5)}</td>
-        <td class="mono">${money(m.reimb)}</td>
-        <td><input type="number" data-midx="${i}" class="inp-miles" value="${m.miles}" min="0" style="width:80px"></td></tr>`).join("");
-  } else $("q-mileage").style.display = "none";
+        <td><input type="number" data-midx="${i}" class="inp-miles" value="${m.miles}" min="0" style="width:80px"></td>
+        <td>${st}</td></tr>${m.note?`<tr class="salrow"><td></td><td colspan="5" class="adminnote">📝 ${esc(m.note)}</td></tr>`:""}`;
+      }).join("");
+    if (S.milSkipped.length) {
+      $("mil-skipped").style.display = "block";
+      $("mil-skipped-list").innerHTML = S.milSkipped.map(s=>`<li>${esc(s)}</li>`).join("");
+    } else $("mil-skipped").style.display = "none";
+  } else { $("q-mileage").style.display = "none"; }
 
   // cancellations
   if (S.cancBillable.length) {
     $("q-canc").style.display = "block";
-    $("tbl-canc").innerHTML = `<tr><th>Client</th><th>Date</th><th>Caregiver</th><th>Booked hrs</th><th>How to bill</th></tr>` +
+    $("tbl-canc").innerHTML = `<tr><th>Care.com Job ID</th><th>Client</th><th>Date</th><th>Caregiver</th><th>Booked hrs</th><th>How to bill</th></tr>` +
       S.cancBillable.map((c,i)=>{
         const grp = c.group ? `<span class="pill multi" title="Consecutive-day booking for the same client — if cancelled together, only one day should be charged">multi-day #${c.group}</span> ` : "";
+        const dbl = c.dbl ? `<span class="pill less" title="This caregiver also has completed Care.com job ${c.dbl} on this date — either the cancellation or the completed job should come off">⚠ dbl ${c.dbl}</span> ` : "";
+        const idWarn = /^\d{7}$/.test(c.bk) ? "" : ` title="This looks like a Sitterwise booking number — Care.com needs THEIR 7-digit job ID (find it in the Care portal)" style="border-color:var(--amber)"`;
         return `<tr>
-          <td>${grp}${c.client}</td><td class="mono">${c.date.slice(5)}</td><td>${c.cg}</td>
+          <td><input type="text" data-cidx="${i}" class="inp-cid mono" value="${esc(c.bk)}" style="width:90px"${idWarn}></td>
+          <td>${dbl}${grp}${c.client}</td><td class="mono">${c.date.slice(5)}</td><td>${c.cg}</td>
           <td class="mono">${c.hrs ? c.hrs.toFixed(2) : "—"}</td>
           <td><select data-cidx="${i}" class="inp-cmode">
             <option value=">24" selected>&gt;24 hr — flat fee</option>
             <option value="<24">&lt;24 hr — booked hrs @ rate (cap 8)</option>
             <option value="none">No charge</option>
-          </select></td></tr>`;
+          </select></td></tr>${c.note?`<tr><td colspan="6" class="adminnote">📝 ${esc(c.note)}</td></tr>`:""}`;
       }).join("");
   } else $("q-canc").style.display = "none";
 
   $("excl-list").innerHTML = S.cancExcluded.map(e=>`<li>${e.label}</li>`).join("") || "<li>Nothing was excluded.</li>";
   $("excl-details").style.display = S.cancExcluded.length ? "block" : "none";
+  if (S.adminNotes.length) {
+    $("notes-list").innerHTML = S.adminNotes.map(n=>`<li><b>${esc(n.client)}</b> ${n.date.slice(5)} (${esc(n.cg||"—")}, ${esc(n.status)}): ${esc(n.note)}</li>`).join("");
+    $("notes-details").style.display = "block";
+  } else $("notes-details").style.display = "none";
+
+  // possible double-bills: offer to exclude the completed job (if it wasn't actually worked)
+  if (S.dblBill.length) {
+    $("q-exclude").style.display = "block";
+    $("tbl-exclude").innerHTML = `<tr><th>Exclude</th><th>Care Job</th><th>Caregiver</th><th>Client</th><th>Date</th></tr>` +
+      S.dblBill.map((d,i)=>`<tr class="salrow"><td><input type="checkbox" data-xidx="${i}" class="inp-excl"></td>
+        <td class="mono">${d.jid}</td><td>${d.cg}</td><td>${d.client}</td><td class="mono">${d.date.slice(5)}</td></tr>`).join("");
+  } else $("q-exclude").style.display = "none";
 
   $("q-actions").style.display = "flex";
   document.querySelectorAll("#card-questions input, #card-questions select").forEach(el=>el.addEventListener("input", updateTape));
@@ -325,6 +418,9 @@ function collectAnswers() {
   S.jobs.forEach(j=>j.miles=0);
   S.mileageCand.forEach(m=>{ if (m.include) { const j=S.jobs.find(x=>x.jid===m.jid); if (j) j.miles = m.miles; } });
   document.querySelectorAll(".inp-cmode").forEach(sel=>{ S.cancBillable[+sel.dataset.cidx].mode = sel.value; });
+  document.querySelectorAll(".inp-cid").forEach(inp=>{ const v=inp.value.trim(); if (v) S.cancBillable[+inp.dataset.cidx].bk = v; });
+  S.excludeJobs = new Set();
+  document.querySelectorAll(".inp-excl").forEach(cb=>{ if (cb.checked) S.excludeJobs.add(S.dblBill[+cb.dataset.xidx].jid); });
   return {rate, otRate: Math.round(rate*1.5*100)/100, mileRate, cancFee, invNum: $("set-invnum").value.trim()};
 }
 
@@ -332,6 +428,7 @@ function collectAnswers() {
 function computeTotals(a) {
   let regH=0, otH=0, bonus=0, miles=0;
   for (const j of S.jobs) {
+    if (S.excludeJobs.has(j.jid)) continue;
     const h = Math.max(j.hrs, 4); // 4-hr minimum
     regH += Math.min(h,8); otH += Math.max(h-8,0);
     bonus += j.bonus; miles += j.miles;
@@ -418,7 +515,7 @@ async function buildWorkbook(a) {
 
   // completed rows
   const SALMON_COLS=[6,7,9,10,13,14,15];
-  const jobsSorted=[...S.jobs].sort((x,y)=> lastName(x.cg).toLowerCase().localeCompare(lastName(y.cg).toLowerCase()) || x.cg.localeCompare(y.cg) || x.date.localeCompare(y.date) || x.start.localeCompare(y.start));
+  const jobsSorted=[...S.jobs].filter(j=>!S.excludeJobs.has(j.jid)).sort((x,y)=> lastName(x.cg).toLowerCase().localeCompare(lastName(y.cg).toLowerCase()) || x.cg.localeCompare(y.cg) || x.date.localeCompare(y.date) || x.start.localeCompare(y.start));
   let r=6;
   const styleDataRow = row => { for (let c=1;c<=17;c++){ const cell=ws.getCell(row,c); cell.font=DFONT; cell.border=BORD; if (SALMON_COLS.includes(c)) cell.fill={type:"pattern",pattern:"solid",fgColor:{argb:SALMON}}; } };
   const dateSerial = iso => { const [Y,M,D]=iso.split("-").map(Number); return Math.round((Date.UTC(Y,M-1,D)-Date.UTC(1899,11,30))/86400000); };
@@ -441,12 +538,16 @@ async function buildWorkbook(a) {
       if (note) ws.getCell(r,17).value=note;
       setFormulas(r); r++;
     } else {
+      // Care.com OT format: row 1 shows the FULL shift in the Actual columns and the
+      // first 8 hrs in the Requested columns; row 2 has no repeated identity, just
+      // "CA OT" and the overtime span in the Requested columns.
       const regEnd=addMin(rs,480);
-      styleDataRow(r); setCommon(r,j); setTimes(r,rs,regEnd);
+      styleDataRow(r); setCommon(r,j);
+      [[6,rs],[7,re],[9,rs],[10,regEnd]].forEach(([c,t])=>{ const cell=ws.getCell(r,c); cell.value=timeFrac(t); cell.numFmt="h:mm AM/PM"; });
       ws.getCell(r,12).value=a.rate; if (j.bonus) ws.getCell(r,13).value=j.bonus; if (j.miles) ws.getCell(r,14).value=j.miles;
       if (note) ws.getCell(r,17).value=note;
       setFormulas(r); r++;
-      styleDataRow(r); setCommon(r,j);
+      styleDataRow(r); // identity columns intentionally left blank on the OT line
       ws.getCell(r,8).value="CA OT";
       [[9,regEnd],[10,re]].forEach(([c,t])=>{ const cell=ws.getCell(r,c); cell.value=timeFrac(t); cell.numFmt="h:mm AM/PM"; });
       ws.getCell(r,11).value={formula:`(MOD(J${r}-I${r},1)*24)`};
@@ -457,10 +558,9 @@ async function buildWorkbook(a) {
     }
   }
   const lastCompleted=r-1;
-  if (lastCompleted>288) throw new Error("more completed lines than the template allows (289) — talk to Claude about extending the layout");
 
   // cancellation section at template positions 295/296/297
-  const CANC_TITLE=295, CANC_HDR=296, CANC_START=297;
+  const CANC_TITLE=lastCompleted+2, CANC_HDR=CANC_TITLE+1, CANC_START=CANC_TITLE+2; // right after the jobs, no blank gap
   const tcell=ws.getCell(CANC_TITLE,1); tcell.value="CANCELLATIONS"; tcell.font={...HFONT};
   tcell.fill={type:"pattern",pattern:"solid",fgColor:{argb:SALMON}};
   const CH=["Booking ID","More than or less than 24 hrs","Client Name","State","Date","","","","","","Total Hrs","Rate","","","","",""];
@@ -488,11 +588,11 @@ async function buildWorkbook(a) {
     }
     cr++;
   }
-  if (cr-1>358) throw new Error("more cancellation lines than the template allows");
 
   // total at 360 like the template
-  ws.getCell(360,16).value={formula:"SUM(P6:P358)"}; ws.getCell(360,16).numFmt=MONEYFMT; ws.getCell(360,16).font={...HFONT};
-  ws.getCell(360,17).value="Invoice Total"; ws.getCell(360,17).font={...HFONT};
+  const TOTAL_ROW = cr;
+  ws.getCell(TOTAL_ROW,16).value={formula:`SUM(P6:P${cr-1})`}; ws.getCell(TOTAL_ROW,16).numFmt=MONEYFMT; ws.getCell(TOTAL_ROW,16).font={...HFONT};
+  ws.getCell(TOTAL_ROW,17).value="Invoice Total"; ws.getCell(TOTAL_ROW,17).font={...HFONT};
 
   // policy text 361-369
   const POLICY=["Cancellation Policy ",
@@ -504,7 +604,7 @@ async function buildWorkbook(a) {
    "5. If a caregiver arrives at a client's home and finds out that a job has been cancelled, agencies are permitted to charge the full shift.",
    "6. If a client cancels a job, due to a caregiver not making their introductory phone call, we would not pay that cancellation fee.",
    "7. Cancellation fees will not be paid if a client cancels due to a caregiver not arriving on time."];
-  POLICY.forEach((t,i)=>{ const c=ws.getCell(361+i,1); c.value=t; c.font= i===0? {...HFONT} : {name:"Calibri",size:10}; });
+  POLICY.forEach((t,i)=>{ const c=ws.getCell(TOTAL_ROW+2+i,1); c.value=t; c.font= i===0? {...HFONT} : {name:"Calibri",size:10}; });
 
   const t = computeTotals(a);
   const buf = await wb.xlsx.writeBuffer();

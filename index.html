@@ -95,6 +95,8 @@ h1{font-family:var(--disp);font-weight:700;font-size:clamp(26px,3.4vw,38px);marg
 .chip b{color:var(--navy)}
 .chip.warn{background:#FBF3E2;border-color:#E7D5AC;color:var(--amber)}
 .chip.good{background:#F0F7F3;border-color:#CBE3D6;color:var(--green)}
+.chip.note{background:#FFF6F6;border-color:var(--salmon-deep);color:var(--navy)}
+td.adminnote{font-size:12px;color:var(--amber);font-style:italic;background:#FFFBF2;border-bottom:1px solid #EDF1F4;padding:6px 10px 8px}
 
 /* settings grid */
 .set-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-top:6px}
@@ -172,6 +174,13 @@ footer b{color:var(--navy)}
         <div class="fname" id="fname-book"></div>
         <input type="file" id="file-book" accept=".xlsx,.xls,.csv">
       </label>
+      <label class="drop" id="drop-mil" style="grid-column:1 / -1">
+        <div class="ic">🚗</div>
+        <div class="dt">Mileage requests <span style="font-weight:400;color:var(--muted)">(optional, recommended)</span></div>
+        <div class="dd">Export of the caregiver Mileage Request form (Cognito) — the source of truth for billable miles. Without it, mileage is estimated from reimbursements.</div>
+        <div class="fname" id="fname-mil"></div>
+        <input type="file" id="file-mil" accept=".xlsx,.xls,.csv">
+      </label>
     </div>
     <div class="btn-row">
       <button class="btn btn-primary" id="btn-analyze" disabled>Read the files</button>
@@ -204,8 +213,9 @@ footer b{color:var(--navy)}
 
     <div id="q-mileage" style="display:none">
       <h3 style="font-size:14px;color:var(--navy);margin:22px 0 2px">Mileage</h3>
-      <p class="sub" style="margin-bottom:4px">Jobs on this invoice with a mileage reimbursement in the bookings file. Confirm billable miles (miles over the 40-mile round trip).</p>
+      <p class="sub" style="margin-bottom:4px">Caregiver mileage submissions matched to this invoice. Jobs with a bonus are unticked by default — Care.com won't pay both unless pre-approved.</p>
       <table class="q" id="tbl-mileage"></table>
+      <details class="excl" id="mil-skipped" style="display:none"><summary>Mileage submissions NOT on this invoice (and why)</summary><ul id="mil-skipped-list"></ul></details>
     </div>
 
     <div id="q-canc" style="display:none">
@@ -214,6 +224,14 @@ footer b{color:var(--navy)}
       <table class="q" id="tbl-canc"></table>
       <details class="excl" id="excl-details"><summary>What was excluded automatically</summary><ul id="excl-list"></ul></details>
     </div>
+
+    <div id="q-exclude" style="display:none">
+      <h3 style="font-size:14px;color:var(--navy);margin:22px 0 2px">Possible double-bills</h3>
+      <p class="sub" style="margin-bottom:4px">These completed Care.com jobs share a caregiver and date with a billed cancellation — the same shift may be on the invoice twice. If the caregiver did NOT actually work, tick the box to exclude the completed job (and keep the cancellation). If they DID work, leave it unticked and set the cancellation to "No charge" instead.</p>
+      <table class="q" id="tbl-exclude"></table>
+    </div>
+
+    <details class="excl" id="notes-details" style="display:none"><summary>All admin notes this month (internal — never printed on the invoice)</summary><ul id="notes-list"></ul></details>
 
     <div class="btn-row" id="q-actions" style="display:none">
       <button class="btn btn-primary" id="btn-build">Build the invoice</button>

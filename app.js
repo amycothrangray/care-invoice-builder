@@ -414,8 +414,15 @@ function analyze(careWB, bookWB, milWB, xeroTxt) {
       }
       if (seenJid.has(j.jid)) continue; // duplicate submission for the same job
       seenJid.add(j.jid);
-      mileageCand.push({ jid: j.jid, cg: j.cg, client: j.client, date: j.date, reimb: e.amt, miles: e.over,
-        include: !(j.bonus > 0), conflict: j.bonus > 0, src: "form"+how, note: "" });
+      // Who filed the claim isn't always who worked the job. A caregiver cancelled off
+      // a job can still file mileage against its number — and then file again against
+      // the job she did work, so the same drive arrives twice under two job numbers.
+      const sameCg = e.name && j.cg && firstName(e.name)===firstName(j.cg) && lastName(e.name)===lastName(j.cg);
+      const mismatch = !!(e.name && !sameCg);
+      mileageCand.push({ jid: j.jid, cg: j.cg, submitter: e.name || "", mismatch,
+        client: j.client, date: j.date, reimb: e.amt, miles: e.over,
+        include: !(j.bonus > 0) && !mismatch, conflict: j.bonus > 0, src: "form"+how,
+        note: mismatch ? `Filed by ${e.name}, but the Care.com export has ${j.cg} on job ${j.jid}. Confirm who actually drove before billing this.` : "" });
     }
   } else {
     // The bookings export now carries mileage approval itself. Use it when it is
@@ -599,6 +606,7 @@ function renderQuestions(extra) {
     S.milSource==="form" ? `<span class="chip good">🚗 mileage form: ${S.mileageCand.length} matched, ${S.milSkipped.length} skipped — miles read from “${esc(S.milCol)}”</span>` : `<span class="chip warn">no mileage form uploaded \u2014 mileage below is estimated from reimbursements</span>`,
     (S.milSource==="form" && S.milBlank) ? `<span class="chip warn">⚠ ${S.milBlank} mileage submission(s) had no billable miles in “${esc(S.milCol)}” — they will bill $0 unless you type the miles in below</span>` : "",
     S.mileageCand.some(m=>m.include && !m.miles) ? `<span class="chip warn">⚠ ${S.mileageCand.filter(m=>m.include && !m.miles).length} mileage row(s) are ticked but set to 0 miles — they add nothing to the invoice</span>` : "",
+    S.mileageCand.some(m=>m.mismatch) ? `<span class="chip warn">⚠ ${S.mileageCand.filter(m=>m.mismatch).length} mileage claim(s) filed by someone other than the caregiver on the job — unticked, confirm who drove</span>` : "",
     S.dblBill.length ? `<span class="chip warn">⚠ ${S.dblBill.length} possible double-bill(s): a billed cancellation's caregiver also has a completed job that day — see below</span>` : "",
     S.adminNotes.length ? `<span class="chip note">📝 ${S.adminNotes.length} admin note(s) in the bookings file — shown next to the calls below</span>` : "",
     S.careHasStatus
@@ -632,7 +640,9 @@ function renderQuestions(extra) {
     $("q-mileage").style.display = "block";
     $("tbl-mileage").innerHTML = `<tr><th>Include</th><th>Job</th><th>Caregiver</th><th>Date</th><th>Miles over 40 RT</th><th>Status</th></tr>` +
       S.mileageCand.map((m,i)=>{
-        const st = m.conflict
+        const st = m.mismatch
+          ? `<span class="pill less" title="The mileage form was filed by ${esc(m.submitter)}, but the Care.com export shows ${esc(m.cg)} worked job ${esc(m.jid)}. Unticked until you confirm who drove.">\u26a0 filed by ${esc(m.submitter)}, not ${esc(m.cg)}</span>`
+          : m.conflict
           ? `<span class="pill less" title="Care.com does not pay mileage AND a bonus on the same job unless both are pre-approved.">\u26a0 $50 bonus on this job \u2014 pick one</span>`
           : (S.milSource==="form" ? `<span class="pill multi">\u2713 form submission</span>` : `<span class="pill skip">estimate \u2014 verify</span>`);
         return `<tr class="salrow">

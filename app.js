@@ -577,6 +577,7 @@ function analyze(careWB, bookWB, milWB, xeroTxt) {
 
   renderQuestions({tips, mileageOffInvoice});
   renderClients();
+  askInit();
 }
 
 /* ---------------- questions UI ---------------- */
@@ -1301,6 +1302,147 @@ $("btn-xero").addEventListener("click", ()=>{
     setStep(4);
   } catch(e) { err.textContent = "Couldn't build the CSV: " + e.message; err.style.display = "block"; }
 });
+
+/* ================================================================
+   ASK — a question box over the loaded exports.
+   Names never leave the browser. Every client, caregiver and submitter is
+   swapped for an opaque token (client#3, cg#7) before the request goes out,
+   and swapped back when the answer is rendered, so the reply reads normally
+   while the API only ever sees tokens. Emails, phones and street addresses
+   are dropped outright; free-text admin notes are scrubbed as well.
+   ================================================================ */
+
+const askTok = { toTok: new Map(), toName: new Map(), n: 0 };
+function tok(kind, name) {
+  const clean = cleanName(name);
+  if (!clean) return "";
+  const key = kind + "|" + clean.toLowerCase();
+  if (!askTok.toTok.has(key)) {
+    const t = `${kind}#${++askTok.n}`;
+    askTok.toTok.set(key, t);
+    askTok.toName.set(t, clean);
+  }
+  return askTok.toTok.get(key);
+}
+/* free text can name anyone; drop contact details and swap any name we know */
+function scrub(text) {
+  let t = String(text || "")
+    .replace(/[\w.+-]+@[\w.-]+\.\w+/g, "[email]")
+    .replace(/(\+?\d[\d\-().\s]{7,}\d)/g, "[phone]")
+    .replace(/\b\d{1,6}\s+[A-Za-z0-9.'-]+(?:\s+[A-Za-z0-9.'-]+){0,4}\s+(?:St|Street|Ave|Avenue|Rd|Road|Dr|Drive|Ln|Lane|Blvd|Ct|Court|Way|Pl|Place|Ter|Circle|Cir)\b\.?/gi, "[address]");
+  for (const [key, t2] of askTok.toTok) {
+    const name = key.split("|")[1];
+    t = t.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), t2);
+  }
+  return t;
+}
+const deTok = text => String(text||"").replace(/\b(client|cg)#\d+/g, m => askTok.toName.get(m) || m);
+
+/* Build the redacted payload. Job numbers, dates, hours, statuses and money —
+   the facts a reconciliation question actually turns on. */
+function askPayload() {
+  askTok.toTok.clear(); askTok.toName.clear(); askTok.n = 0;
+  const a = collectAnswers();
+  // Mint every name FIRST. scrub() can only redact a name it already knows, so
+  // a name minted later in the object literal would survive in a note written
+  // earlier — that is how "Wellthy" once slipped through an admin note.
+  S.jobs.forEach(j => { tok("cg", j.cg); tok("client", j.client); });
+  S.cancBillable.forEach(c => { tok("cg", c.cg); tok("client", c.client); });
+  S.mileageCand.forEach(m => { tok("cg", m.cg); tok("cg", m.submitter); });
+  S.adminNotes.forEach(n => { tok("cg", n.cg); tok("client", n.client); });
+  S.lifesavers.forEach(l => { tok("cg", l.cg); tok("client", l.client); });
+  S.clientInvoices.forEach(i => {
+    tok("client", i.contact);
+    (i.canc || []).forEach(c => { tok("cg", c.cg); tok("client", c.client); });
+    (i.lines || []).forEach(l => tok("cg", l.desc));   // caregiver-style lines are a bare name
+  });
+  const p = {
+    month: `${MONTHS[S.month-1]} ${S.year}`,
+    rates: { regular: a.rate, overtime: a.otRate, mileagePerMile: a.mileRate, cancellationFee: a.cancFee },
+    rules: "Care.com: 4-hour minimum; California daily overtime over 8h at 1.5x; mileage only on miles over a 40-mile round trip; cancellations $30 flat over 24h notice, else up to 8h at the hourly rate.",
+    completedJobs: S.jobs.map(j => ({
+      job: j.jid, date: j.date, start: j.start, end: j.end, hrs: +j.hrs.toFixed(2),
+      caregiver: tok("cg", j.cg), client: tok("client", j.client),
+      bonus: j.bonus || 0, state: j.state, careStatus: j.status,
+      excludedFromInvoice: S.excludeJobs.has(j.jid) || undefined,
+    })),
+    cancellations: S.cancBillable.map(c => ({
+      id: c.bk, fromCareExport: c.src === "care", date: c.date,
+      client: tok("client", c.client), caregiver: tok("cg", c.cg),
+      bookedHrs: c.hrs, noticeHours: c.notice === null ? null : +(+c.notice).toFixed(1),
+      billedAs: c.mode, partOfMultiDay: c.group ? true : undefined,
+    })),
+    excludedCancellations: S.cancExcluded.map(e => ({ why: e.why, detail: scrub(e.label) })),
+    mileage: S.mileageCand.map(m => ({
+      job: m.jid, date: m.date, caregiverOnJob: tok("cg", m.cg),
+      filedBy: m.submitter ? tok("cg", m.submitter) : undefined,
+      filedByDiffersFromCaregiver: m.mismatch || undefined,
+      submittedMiles: m.subMiles, submittedAmount: m.subAmt,
+      milesToBill: m.miles, amountToBill: +(m.miles * a.mileRate).toFixed(2),
+      approved: !!m.include, hasBonusOnJob: m.conflict || undefined,
+    })),
+    mileageNotOnThisInvoice: S.milSkipped.map(scrub),
+    adminNotes: S.adminNotes.map(n => ({ date: n.date, client: tok("client", n.client), caregiver: tok("cg", n.cg), status: n.status, note: scrub(n.note) })),
+    lifesaverBonuses: S.lifesavers.map(l => ({ date: l.date, client: tok("client", l.client), caregiver: tok("cg", l.cg), amount: l.amt })),
+    otherClientInvoices: S.clientInvoices.map(i => ({
+      xeroContact: tok("client", i.contact), invoiceNumber: i.num, rate: i.p.rate,
+      quoteBilled: i.quote, willSend: i.include, total: i.total,
+      lines: i.lines.map(l => ({ description: scrub(l.desc), qty: l.qty, rate: l.rate, alreadyInvoiced: l.already || undefined })),
+    })),
+    totals: computeTotals(a),
+  };
+  return p;
+}
+
+function askInit() {
+  const box = $("ask-card"); if (!box) return;
+  box.classList.remove("locked");
+  const pw = $("ask-pw");
+  try { pw.value = localStorage.getItem("sw-ask-pw") || ""; } catch {}
+  $("ask-preview-btn").addEventListener("click", () => {
+    const el = $("ask-preview");
+    if (el.style.display === "block") { el.style.display = "none"; $("ask-preview-btn").textContent = "Show exactly what gets sent"; return; }
+    el.textContent = JSON.stringify(askPayload(), null, 1);
+    el.style.display = "block";
+    $("ask-preview-btn").textContent = "Hide what gets sent";
+  });
+  $("ask-go").addEventListener("click", askSend);
+  $("ask-q").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) askSend(); });
+}
+
+async function askSend() {
+  const q = $("ask-q").value.trim(); if (!q) return;
+  const out = $("ask-out"), btn = $("ask-go");
+  const pw = $("ask-pw").value.trim();
+  try { localStorage.setItem("sw-ask-pw", pw); } catch {}
+  out.style.display = "block"; out.textContent = "Thinking…"; btn.disabled = true;
+  try {
+    const res = await fetch("/.netlify/functions/ask", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ask-password": pw },
+      body: JSON.stringify({ question: q, data: askPayload() }),
+    });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch {}
+      throw new Error(msg);
+    }
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    out.textContent = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      out.textContent = deTok(buf);              // names restored for reading only
+      out.scrollTop = out.scrollHeight;
+    }
+    if (!buf.trim()) out.textContent = "No answer came back — try rephrasing.";
+  } catch (e) {
+    out.textContent = "Couldn't ask: " + e.message +
+      "\n\nThis panel needs ANTHROPIC_API_KEY and ASK_PASSWORD set on the Netlify site, and only works on the deployed site — not from a file:// page.";
+  } finally { btn.disabled = false; }
+}
 
 /* ---------------- stepper ---------------- */
 function setStep(n) {

@@ -1,0 +1,9 @@
+# The site is plain static files at the repo root; the only build step is
+# installing the function's dependency.
+[build]
+  publish = "."
+  command = "npm install --omit=dev"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"

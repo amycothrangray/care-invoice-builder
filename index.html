@@ -115,7 +115,11 @@ table.q .mono{font-family:var(--mono);font-size:12.5px}
 table.q select,table.q input[type=text],table.q input[type=number]{font-family:var(--mono);font-size:12.5px;padding:6px 8px;border:1.5px solid var(--line);border-radius:6px;background:#fff;max-width:100%}
 table.q select:focus,table.q input:focus{outline:none;border-color:var(--coral)}
 .salrow{background:#FFF6F6}
-.pill{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:12px;letter-spacing:.04em}
+.callout{background:#FFF6F6;border:1px solid var(--salmon-deep);border-left:4px solid var(--coral);border-radius:8px;
+  padding:12px 16px;margin:0 0 18px;font-size:13px;color:var(--ink);line-height:1.6}
+.callout b{color:var(--navy)}
+.pill{display:inline-block;white-space:nowrap;font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:12px;letter-spacing:.04em;vertical-align:middle}
+#tbl-canc td:nth-child(2){min-width:210px}
 .pill.skip{background:#EEF2F5;color:var(--muted)}
 .pill.multi{background:var(--salmon);color:var(--navy)}
 .pill.less{background:#FBE9E5;color:var(--red)}
@@ -158,12 +162,21 @@ footer b{color:var(--navy)}
   <!-- STEP 1 -->
   <section class="card" id="card-upload">
     <h2>The two exports <span class="badge">step 1</span></h2>
-    <p class="sub">Same two files as every month. The Care.com export is the billing source of truth (jobs + bonuses); the bookings export supplies client names, mileage, and cancellations.</p>
+    <p class="sub">Same two files as every month. The Care.com export is the billing source of truth (jobs, bonuses, cancellations); the bookings export supplies client names and mileage.</p>
+    <div class="callout">
+      <b>Pull the Care.com export with <u>both</u> cancelled and active/completed jobs.</b>
+      Don't filter it to one status. The cancelled rows are what give each cancellation
+      Care.com's own job ID and a cancellation timestamp — that timestamp is what sets
+      the &gt;24 hr / &lt;24 hr fee automatically instead of you guessing, and it proves
+      which cancellations were reassigned and already billed as worked. A completed-only
+      export still builds, but every cancellation falls back to the bookings file with a
+      Sitterwise booking number and no notice time.
+    </div>
     <div class="drops">
       <label class="drop" id="drop-care">
         <div class="ic">🗂️</div>
         <div class="dt">Care.com export</div>
-        <div class="dd">CareAtWorkBackupCareJobs…xlsx — the "Done" jobs list</div>
+        <div class="dd">CareAtWorkBackupCareJobs…xlsx — cancelled <b>and</b> active/completed jobs</div>
         <div class="fname" id="fname-care"></div>
         <input type="file" id="file-care" accept=".xlsx,.xls,.csv">
       </label>
@@ -220,7 +233,7 @@ footer b{color:var(--navy)}
 
     <div id="q-canc" style="display:none">
       <h3 style="font-size:14px;color:var(--navy);margin:22px 0 2px">Cancellations</h3>
-      <p class="sub" style="margin-bottom:4px">Reassignment shadows and unfilled jobs are already excluded. Set how each billable cancellation should be charged — consecutive-day bookings for the same client are flagged for a possible single fee.</p>
+      <p class="sub" style="margin-bottom:4px">Reassignment shadows and unfilled jobs are already excluded. Where the Care.com export gave a cancellation timestamp, the &gt;24 hr / &lt;24 hr choice below is already set from the measured notice, and consecutive days cancelled together are zeroed to a single fee — change any of it if you know better.</p>
       <table class="q" id="tbl-canc"></table>
       <details class="excl" id="excl-details"><summary>What was excluded automatically</summary><ul id="excl-list"></ul></details>
     </div>

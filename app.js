@@ -201,16 +201,23 @@ function parseMileageForm(wb) {
   let hi = rows.findIndex(r => (r||[]).some(c => /job/i.test(String(c ?? ""))));
   if (hi === -1) hi = 0;
   const raw = (rows[hi]||[]).map(h => String(h ?? "").trim());
-  const hdr = raw.map(h => h.toLowerCase().replace(/\s+/g," "));
+  // Cognito exports field NAMES, not labels: "TotalMilesAbove40", "CarecomJob",
+  // "Name_First". Split camelCase and underscores so word-boundary patterns can
+  // match at all — matching the raw string is what made every miles column miss.
+  const hdr = raw.map(h => h.replace(/_/g," ")
+                            .replace(/(?<=[a-z0-9])(?=[A-Z])/g," ")
+                            .replace(/(?<=[A-Za-z])(?=\d)/g," ")
+                            .replace(/\s+/g," ").trim().toLowerCase());
   const find = (...pats) => { for (const re of pats) { const i = hdr.findIndex(h => re.test(h)); if (i > -1) return i; } return -1; };
 
   const jc = find(/care\.?com job/, /job\s*#/, /job number/, /job/);
   if (jc === -1) throw new Error(`mileage file: no job-number column. Headers found: ${raw.filter(Boolean).join(" | ") || "(none)"}`);
-  const nc = find(/caregiver name/, /your name/, /name/);
+  const nc  = find(/caregiver name/, /your name/, /^name$/, /name first/, /first name/, /name/);
+  const nc2 = find(/name last/, /last name/);
   const ac = find(/amount/, /reimburse/, /\$/);
   // miles, best first: an explicit over-40 figure, then a billable/payable figure,
   // then a round-trip total we can subtract the 40-mile threshold from.
-  const oc = find(/over\s*40/, /miles over/, /over/, /billable/, /payable/, /excess/);
+  const oc = find(/(?:over|above)\s*40/, /miles (?:over|above)/, /over/, /above/, /billable/, /payable/, /excess/);
   const tc = find(/total number/, /number of miles/, /total miles/, /round.?trip/, /^miles$/, /miles driven/, /mileage/, /miles/);
   if (oc === -1 && tc === -1)
     throw new Error(`mileage file: found the job column but no miles column, so every job would import as 0 miles. Headers found: ${raw.filter(Boolean).join(" | ")}`);
@@ -223,7 +230,8 @@ function parseMileageForm(wb) {
     let over = oc>-1 ? money2num(r[oc]) : 0;
     if (!over && total) over = Math.max(Math.round(total-40), 0);
     if (!over) blank++;
-    out.push({ job:String(r[jc]).trim(), name: nc>-1?cleanName(r[nc]):"", over, total, amt: ac>-1?money2num(r[ac]):0 });
+    const nm = [nc>-1?r[nc]:"", nc2>-1?r[nc2]:""].filter(Boolean).join(" ");
+    out.push({ job:String(r[jc]).trim(), name:cleanName(nm), over, total, amt: ac>-1?money2num(r[ac]):0 });
   }
   if (out.length && blank === out.length)
     throw new Error(`mileage file: read ${out.length} submission(s) from “${used}” but every one came out at 0 billable miles — that column doesn't hold the mileage. Headers found: ${raw.filter(Boolean).join(" | ")}`);

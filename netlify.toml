@@ -1,8 +1,10 @@
-# The site is plain static files at the repo root; the only build step is
-# installing the function's dependency.
+# The site is two static files plus one function. The build installs the
+# function's dependency and copies the static files into dist/ — publishing the
+# repo root instead would also publish node_modules (thousands of files created
+# by that same npm install) along with package.json and the function source.
 [build]
-  publish = "."
-  command = "npm install --omit=dev"
+  command = "npm install && rm -rf dist && mkdir -p dist && cp index.html app.js dist/"
+  publish = "dist"
   functions = "netlify/functions"
 
 [functions]

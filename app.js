@@ -420,7 +420,7 @@ function analyze(careWB, bookWB, milWB, xeroTxt) {
       const sameCg = e.name && j.cg && firstName(e.name)===firstName(j.cg) && lastName(e.name)===lastName(j.cg);
       const mismatch = !!(e.name && !sameCg);
       mileageCand.push({ jid: j.jid, cg: j.cg, submitter: e.name || "", mismatch,
-        client: j.client, date: j.date, reimb: e.amt, miles: e.over,
+        client: j.client, date: j.date, reimb: e.amt, miles: e.over, subMiles: e.over, subAmt: e.amt,
         include: !(j.bonus > 0) && !mismatch, conflict: j.bonus > 0, src: "form"+how,
         note: mismatch ? `Filed by ${e.name}, but the Care.com export has ${j.cg} on job ${j.jid}. Confirm who actually drove before billing this.` : "" });
     }
@@ -438,7 +438,8 @@ function analyze(careWB, bookWB, milWB, xeroTxt) {
         const miles = Math.round(r.payMiles || r.apprMiles || Math.max(r.rtMiles-40, 0));
         if (!j) { mileageOffInvoice.push(r); continue; }
         mileageCand.push({ jid: j.jid, cg: j.cg, client: r.client||j.client, date: r.date,
-          reimb: r.milAmt || r.reimb, miles, include: !(j.bonus > 0), conflict: j.bonus > 0,
+          reimb: r.milAmt || r.reimb, miles, subMiles: miles, subAmt: r.milAmt || r.reimb,
+          include: !(j.bonus > 0), conflict: j.bonus > 0,
           src: "approved in the bookings export", note: r.note || "" });
       }
     } else {
@@ -451,8 +452,9 @@ function analyze(careWB, bookWB, milWB, xeroTxt) {
         const match = jobFor(r);
         const desc = r.reimbDesc ? `reimbursement “${r.reimbDesc}” ($${r.reimb.toFixed(2)})` : `$${r.reimb.toFixed(2)} reimbursement`;
         const mixed = /\+|\/|extra|additional|kid|child/i.test(r.reimbDesc) && /mile/i.test(r.reimbDesc);
+        const est = Math.round(r.reimb/0.76);
         if (match) mileageCand.push({ jid: match.jid, cg: match.cg, client: r.client, date: r.date, reimb: r.reimb,
-          miles: Math.round(r.reimb/0.76), include: !(match.bonus > 0), conflict: match.bonus > 0,
+          miles: est, subMiles: est, subAmt: r.reimb, include: !(match.bonus > 0), conflict: match.bonus > 0,
           src: "estimated from reimbursement — upload the mileage form export for exact figures",
           mixed, note: [mixed ? `⚠ ${desc} covers more than mileage — enter only the mileage portion` : desc, r.note].filter(Boolean).join(" · ") });
         else mileageOffInvoice.push(r);
@@ -638,18 +640,26 @@ function renderQuestions(extra) {
   // mileage
   if (S.mileageCand.length || S.milSkipped.length) {
     $("q-mileage").style.display = "block";
-    $("tbl-mileage").innerHTML = `<tr><th>Include</th><th>Job</th><th>Caregiver</th><th>Date</th><th>Miles over 40 RT</th><th>Status</th></tr>` +
+    // Saudia approves a DOLLAR AMOUNT, not a mileage count, so the amount is a
+    // first-class editable field alongside the miles the invoice actually bills.
+    $("tbl-mileage").innerHTML = `<tr><th>Approve</th><th>Job</th><th>Caregiver</th><th>Date</th><th>Submitted</th><th>Miles over 40 RT</th><th>Amount to bill</th><th>Status</th></tr>` +
       S.mileageCand.map((m,i)=>{
         const st = m.mismatch
           ? `<span class="pill less" title="The mileage form was filed by ${esc(m.submitter)}, but the Care.com export shows ${esc(m.cg)} worked job ${esc(m.jid)}. Unticked until you confirm who drove.">\u26a0 filed by ${esc(m.submitter)}, not ${esc(m.cg)}</span>`
           : m.conflict
           ? `<span class="pill less" title="Care.com does not pay mileage AND a bonus on the same job unless both are pre-approved.">\u26a0 $50 bonus on this job \u2014 pick one</span>`
           : (S.milSource==="form" ? `<span class="pill multi">\u2713 form submission</span>` : `<span class="pill skip">estimate \u2014 verify</span>`);
-        return `<tr class="salrow">
-        <td><input type="checkbox" data-midx="${i}" class="inp-minc"${m.include?" checked":""}></td>
+        const sub = m.subMiles ? `${+(+m.subMiles).toFixed(2)} mi · ${money(m.subAmt||0)}` : "\u2014";
+        return `<tr class="salrow" data-mrow="${i}">
+        <td><span class="seg" role="group">
+             <button type="button" class="sg ok${m.include?" on":""}" data-app="${i}" data-v="1">Approved</button>
+             <button type="button" class="sg no${m.include?"":" on"}" data-app="${i}" data-v="0">Skip</button>
+           </span></td>
         <td class="mono">${m.jid}</td><td>${m.cg}</td><td class="mono">${m.date.slice(5)}</td>
-        <td><input type="number" data-midx="${i}" class="inp-miles" value="${m.miles}" min="0" style="width:80px"></td>
-        <td>${st}</td></tr>${m.note?`<tr class="salrow"><td></td><td colspan="5" class="adminnote">📝 ${esc(m.note)}</td></tr>`:""}`;
+        <td class="mono submitted">${sub}</td>
+        <td><input type="number" data-miles="${i}" class="inp-miles" value="${+(+m.miles).toFixed(2)}" min="0" step="0.01" style="width:84px"></td>
+        <td><span class="amtwrap">$<input type="number" data-amt="${i}" class="inp-amt" value="${(m.miles*0.76).toFixed(2)}" min="0" step="0.01" style="width:88px"></span></td>
+        <td>${st} <span class="adj" data-adj="${i}"></span></td></tr>${m.note?`<tr class="salrow"><td></td><td colspan="7" class="adminnote">📝 ${esc(m.note)}</td></tr>`:""}`;
       }).join("");
     if (S.milSkipped.length) {
       $("mil-skipped").style.display = "block";
@@ -717,6 +727,42 @@ function renderQuestions(extra) {
   } else $("q-exclude").style.display = "none";
 
   $("q-actions").style.display = "flex";
+  // Approved / Skip owns `include`; the two number fields are two views of the
+  // same figure (the invoice bills miles in column N, O = N x rate), so editing
+  // either keeps the other honest.
+  document.querySelectorAll(".sg[data-app]").forEach(b=>b.addEventListener("click", ()=>{
+    const i = +b.dataset.app, on = b.dataset.v === "1";
+    S.mileageCand[i].include = on;
+    document.querySelectorAll(`.sg[data-app="${i}"]`).forEach(x=>x.classList.toggle("on", (x.dataset.v==="1")===on));
+    const row = document.querySelector(`[data-mrow="${i}"]`); if (row) row.classList.toggle("skipped", !on);
+    updateTape();
+  }));
+  const mrate = () => parseFloat($("set-mile").value) || 0.76;
+  const syncAdj = i => {
+    const m = S.mileageCand[i], el = document.querySelector(`[data-adj="${i}"]`);
+    if (!el) return;
+    const d = Math.round((m.miles - (m.subMiles||0))*100)/100;
+    // a caregiver can add up to 10 miles at checkout via reimbursements
+    el.innerHTML = !d ? "" :
+      `<span class="pill ${(d>10||d<0)?"less":"multi"}">${d>0?"+":""}${d} mi vs submitted${d>10?" — over the 10-mile limit":""}</span>`;
+  };
+  document.querySelectorAll(".inp-miles").forEach(inp=>inp.addEventListener("input", ()=>{
+    const i = +inp.dataset.miles, v = Math.max(0, parseFloat(inp.value)||0);
+    S.mileageCand[i].miles = v;
+    const a = document.querySelector(`[data-amt="${i}"]`); if (a) a.value = (v*mrate()).toFixed(2);
+    syncAdj(i); updateTape();
+  }));
+  document.querySelectorAll(".inp-amt").forEach(inp=>inp.addEventListener("input", ()=>{
+    const i = +inp.dataset.amt, amt = Math.max(0, parseFloat(inp.value)||0);
+    const v = Math.round((amt/mrate())*100)/100;
+    S.mileageCand[i].miles = v;
+    const mi = document.querySelector(`[data-miles="${i}"]`); if (mi) mi.value = v;
+    syncAdj(i); updateTape();
+  }));
+  $("set-mile").addEventListener("input", ()=>{
+    S.mileageCand.forEach((m,i)=>{ const a=document.querySelector(`[data-amt="${i}"]`); if (a) a.value=(m.miles*mrate()).toFixed(2); });
+  });
+  S.mileageCand.forEach((m,i)=>{ syncAdj(i); const r=document.querySelector(`[data-mrow="${i}"]`); if (r) r.classList.toggle("skipped", !m.include); });
   document.querySelectorAll("#card-questions input, #card-questions select").forEach(el=>el.addEventListener("input", updateTape));
   updateTape();
   $("card-questions").scrollIntoView({behavior:"smooth", block:"start"});
@@ -730,8 +776,7 @@ function collectAnswers() {
     const j = S.unmatched[+inp.dataset.uidx];
     j.client = cleanName(inp.value) || "Care.com Family";
   });
-  document.querySelectorAll(".inp-minc").forEach(cb=>{ S.mileageCand[+cb.dataset.midx].include = cb.checked; });
-  document.querySelectorAll(".inp-miles").forEach(inp=>{ S.mileageCand[+inp.dataset.midx].miles = Math.max(0, parseInt(inp.value)||0); });
+  document.querySelectorAll(".inp-miles").forEach(inp=>{ S.mileageCand[+inp.dataset.miles].miles = Math.max(0, parseFloat(inp.value)||0); });
   S.jobs.forEach(j=>j.miles=0);
   S.mileageCand.forEach(m=>{ if (m.include) { const j=S.jobs.find(x=>x.jid===m.jid); if (j) j.miles = m.miles; } });
   document.querySelectorAll(".inp-cmode").forEach(sel=>{ S.cancBillable[+sel.dataset.cidx].mode = sel.value; });

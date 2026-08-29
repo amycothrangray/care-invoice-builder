@@ -126,6 +126,17 @@ table.q select:focus,table.q input:focus{outline:none;border-color:var(--coral)}
   padding:12px 16px;margin:0 0 18px;font-size:13px;color:var(--ink);line-height:1.6}
 .callout b{color:var(--navy)}
 .noteslist li{margin-bottom:7px;line-height:1.7}
+/* ask panel */
+#ask-q{width:100%;font-family:var(--body);font-size:14px;padding:11px 13px;border:1.5px solid var(--line);
+  border-radius:9px;resize:vertical;background:#fff;color:var(--ink)}
+#ask-q:focus{outline:none;border-color:var(--teal-deep)}
+.ask-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:11px}
+.pwlab{margin-left:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:7px}
+.pwlab input{font-family:var(--mono);font-size:12.5px;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;width:150px}
+#ask-out,#ask-preview{margin-top:14px;padding:14px 16px;border-radius:9px;white-space:pre-wrap;
+  font-size:13.2px;line-height:1.62;max-height:420px;overflow:auto}
+#ask-out{background:#F4FBFA;border:1px solid #C2ECE6;color:var(--ink);font-family:var(--body)}
+#ask-preview{background:#0C2439;border:1px solid var(--navy);color:#B9D4E6;font-family:var(--mono);font-size:11.5px;max-height:300px}
 /* Approved / Skip segmented toggle */
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:#fff}
 .sg{font-family:var(--body);font-size:11px;font-weight:600;letter-spacing:.02em;padding:5px 12px;border:none;
@@ -310,6 +321,27 @@ footer b{color:var(--navy)}
       <button class="btn btn-primary" id="btn-download">Download the .xlsx</button>
       <p class="hint" style="margin-top:14px">Official template layout · live formulas · full formatting. Review it, then send it to Care.com yourself.</p>
     </div>
+  </section>
+
+  <!-- ASK -->
+  <section class="card locked" id="ask-card">
+    <h2>Ask about this month <span class="badge">redacted</span></h2>
+    <p class="sub">Questions across all three exports at once — "why is 5591219 cancelled with a different caregiver on it?", "which mileage claims were filed by someone who didn't work the job?", "what changed since last month?"</p>
+    <div class="callout" style="border-left-color:var(--teal);background:#EFFAF8;border-color:#C2ECE6">
+      <b>Names never leave your computer.</b> Every client and caregiver is swapped for a token
+      (<span class="mono">client#3</span>, <span class="mono">cg#7</span>) before the question is sent, and swapped back
+      here when the answer comes in. Emails, phone numbers and street addresses are dropped entirely.
+      What does get sent: job numbers, dates, hours, statuses and amounts — press
+      <b>Show exactly what gets sent</b> to read the payload before you send it.
+    </div>
+    <textarea id="ask-q" rows="2" placeholder="e.g. Job 5591219 shows cancelled but a different caregiver worked it — what happened, and is the mileage right?"></textarea>
+    <div class="ask-row">
+      <button class="btn btn-primary" id="ask-go">Ask</button>
+      <button class="btn btn-ghost" id="ask-preview-btn" type="button">Show exactly what gets sent</button>
+      <label class="pwlab">Password <input type="password" id="ask-pw" placeholder="site password" autocomplete="off"></label>
+    </div>
+    <pre id="ask-preview" style="display:none"></pre>
+    <pre id="ask-out" style="display:none"></pre>
   </section>
 
   <!-- STEP 4 -->

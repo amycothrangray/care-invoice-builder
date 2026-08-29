@@ -1,0 +1,9 @@
+{
+  "name": "care-invoice-builder",
+  "private": true,
+  "type": "module",
+  "description": "Sitterwise invoice builder — static site plus one Netlify function for the ask-a-question panel.",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.122.0"
+  }
+}

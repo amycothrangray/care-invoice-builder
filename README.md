@@ -101,3 +101,14 @@ name**, with aliases and fallbacks, so older files still load:
 
 If a future export renames something again, the app fails with the missing
 column's name rather than silently billing the wrong number.
+
+---
+
+## Also in this repo: School Photo Roster Fixer
+
+`school-photo-roster-fixer/` is a separate little app for the photography side
+of things: drop in the spreadsheet a school sends for picture day, get back one
+clean row per student ready for GotPhoto. It shares nothing with the invoice
+builder except the house style, so the folder can be lifted straight into its
+own repo when it outgrows this one. See
+[`school-photo-roster-fixer/README.md`](school-photo-roster-fixer/README.md).

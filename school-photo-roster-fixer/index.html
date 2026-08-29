@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>School Photo Roster Fixer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#1D2B36; --muted:#6B7A87; --teal:#12727A; --teal-dk:#0B565C; --teal-lt:#E6F2F2;
+  --coral:#E4643B; --coral-dk:#C64E28; --sun:#F5B921; --sun-lt:#FFF4D6;
+  --cream:#FBF6EE; --card:#FFFFFF; --line:#E7DFD2; --line-2:#F0EAE0;
+  --green:#2E7D5B; --green-lt:#EDF6F1; --red:#B3372B; --red-lt:#FDF0EE; --amber:#9A6B10;
+  --mono:'IBM Plex Mono',ui-monospace,monospace; --body:'Public Sans',system-ui,sans-serif;
+  --disp:'Fraunces',Georgia,serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--body);background:var(--cream);color:var(--ink);font-size:15px;line-height:1.55}
+.wrap{max-width:1140px;margin:0 auto;padding:0 22px}
+a{color:var(--teal)}
+
+/* ---------------- header ---------------- */
+header{background:linear-gradient(160deg,var(--teal) 0%,var(--teal-dk) 100%);color:#fff;
+  padding:30px 0 26px;position:relative;overflow:hidden}
+header::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(90deg,rgba(255,255,255,.07) 0 14px,transparent 14px 34px);
+  mask-image:linear-gradient(180deg,rgba(0,0,0,.55),transparent 62%)}
+.hd{display:flex;align-items:center;gap:16px;position:relative;z-index:1}
+.cam{flex:none;width:52px;height:52px;border-radius:13px;background:rgba(255,255,255,.14);
+  display:grid;place-items:center;border:1px solid rgba(255,255,255,.25)}
+.hd-eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--sun)}
+h1{font-family:var(--disp);font-weight:700;font-size:clamp(25px,3.2vw,35px);line-height:1.1;margin:3px 0 5px}
+.hd-sub{color:#CFE4E4;max-width:620px;font-size:14.5px}
+.steps{display:flex;margin-top:20px;border:1px solid rgba(255,255,255,.28);border-radius:9px;
+  overflow:hidden;width:fit-content;position:relative;z-index:1;flex-wrap:wrap}
+.step{padding:7px 15px;font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:#A8C7C8;
+  display:flex;gap:7px;align-items:center;border-right:1px solid rgba(255,255,255,.2)}
+.step:last-child{border-right:none}
+.step.active{background:var(--sun);color:#3A2A05;font-weight:600}
+.step.done{color:#fff}
+.step .n{width:17px;height:17px;border-radius:50%;border:1.4px solid currentColor;display:grid;
+  place-items:center;font-size:10px}
+.step.done .n{background:#fff;color:var(--teal-dk);border-color:#fff}
+
+/* ---------------- layout ---------------- */
+.main{display:grid;grid-template-columns:1fr 252px;gap:26px;padding:26px 0 90px;align-items:start}
+@media(max-width:920px){.main{grid-template-columns:1fr}.aside{position:static!important;order:-1}}
+
+/* ---------------- contact-sheet sidebar ---------------- */
+.aside{position:sticky;top:16px}
+.polaroid{background:#fff;border:1px solid var(--line);border-radius:4px;padding:10px 10px 14px;
+  box-shadow:0 10px 22px rgba(29,43,54,.10)}
+.polaroid .win{background:var(--teal-lt);border-radius:2px;padding:16px 12px;text-align:center;
+  border:1px solid #D5E7E7}
+.polaroid .big{font-family:var(--disp);font-size:38px;font-weight:700;color:var(--teal-dk);line-height:1}
+.polaroid .cap{font-family:var(--mono);font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--muted);margin-top:4px}
+.polaroid .strip{margin-top:12px;font-family:var(--mono);font-size:12px}
+.polaroid .srow{display:flex;justify-content:space-between;padding:3px 2px;color:var(--ink)}
+.polaroid .srow .l{color:var(--muted)}
+.polaroid .srow.good b{color:var(--green)}
+.polaroid .srow.warn b{color:var(--coral-dk)}
+.polaroid .note{font-size:10.5px;color:var(--muted);margin-top:10px;line-height:1.5;font-family:var(--body)}
+
+/* ---------------- cards ---------------- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:24px 26px;margin-bottom:20px}
+.card h2{font-family:var(--disp);font-size:20px;color:var(--teal-dk);margin-bottom:3px;
+  display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.card h2 .badge{font-family:var(--mono);font-size:10.5px;font-weight:500;background:var(--sun-lt);
+  color:var(--amber);padding:2px 9px;border-radius:20px;letter-spacing:.05em;border:1px solid #F0DCA8}
+.card .sub{color:var(--muted);font-size:13.5px;margin-bottom:16px;max-width:680px}
+.card.locked{opacity:.4;pointer-events:none}
+h3{font-family:var(--disp);font-size:16px;color:var(--teal-dk);margin:18px 0 8px}
+
+/* ---------------- upload ---------------- */
+.drop{border:2px dashed #C6BCA9;border-radius:12px;padding:34px 20px;text-align:center;cursor:pointer;
+  transition:.15s;background:#FDFAF5}
+.drop:hover,.drop.over{border-color:var(--coral);background:#FFF6F2}
+.drop.filled{border-style:solid;border-color:var(--green);background:var(--green-lt)}
+.drop .dt{font-weight:700;color:var(--teal-dk);margin-top:8px;font-size:16px;font-family:var(--disp)}
+.drop .dd{font-size:13px;color:var(--muted);margin-top:4px}
+.drop .fname{font-family:var(--mono);font-size:12px;color:var(--green);margin-top:9px;word-break:break-all}
+.drop input{display:none}
+
+/* ---------------- buttons ---------------- */
+.btn{font-family:var(--body);font-weight:600;font-size:14.5px;border:none;border-radius:9px;
+  padding:11px 24px;cursor:pointer;transition:.15s}
+.btn-primary{background:var(--coral);color:#fff}
+.btn-primary:hover{background:var(--coral-dk)}
+.btn-primary:disabled{background:#CFC7B8;cursor:not-allowed}
+.btn-go{background:var(--teal);color:#fff}
+.btn-go:hover{background:var(--teal-dk)}
+.btn-ghost{background:#fff;color:var(--teal-dk);border:1.5px solid var(--line)}
+.btn-ghost:hover{border-color:var(--teal)}
+.btn-sm{padding:6px 13px;font-size:13px;border-radius:7px}
+.btn-row{display:flex;gap:11px;margin-top:18px;align-items:center;flex-wrap:wrap}
+.hint{font-size:12.5px;color:var(--muted)}
+
+/* ---------------- chips + dashboard ---------------- */
+.dash{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-top:6px}
+.panel{border:1px solid var(--line);border-radius:11px;padding:14px 16px;background:#FDFCF9}
+.panel h4{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:9px;font-weight:600}
+.panel.good{background:var(--green-lt);border-color:#CDE5D8}
+.panel.review{background:#FFF6F2;border-color:#F3CFC0}
+.panel.cols{background:#FBFAF7}
+.stat{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:2.5px 0}
+.stat b{font-family:var(--mono);font-weight:600}
+.panel.good .stat b{color:var(--green)}
+.panel.review .stat b{color:var(--coral-dk)}
+.panel .none{font-size:12.5px;color:var(--muted);font-style:italic}
+.count-big{font-family:var(--disp);font-size:30px;font-weight:700;color:var(--teal-dk);line-height:1.1}
+
+/* ---------------- tables ---------------- */
+table.t{width:100%;border-collapse:collapse;font-size:13.5px}
+table.t th{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);text-align:left;padding:7px 9px;border-bottom:1.5px solid var(--line);font-weight:600}
+table.t td{padding:7px 9px;border-bottom:1px solid var(--line-2);vertical-align:middle}
+table.t tr:last-child td{border-bottom:none}
+.mono{font-family:var(--mono);font-size:12.5px}
+.sample{color:var(--muted);font-family:var(--mono);font-size:11.5px;max-width:210px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
+select,input[type=text]{font-family:var(--body);font-size:13px;padding:6px 8px;border:1.5px solid var(--line);
+  border-radius:7px;background:#fff;color:var(--ink);max-width:100%}
+select:focus,input:focus{outline:none;border-color:var(--teal)}
+.tag{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;
+  border-radius:20px;border:1px solid;white-space:nowrap}
+.tag.sure{color:var(--green);border-color:#CDE5D8;background:var(--green-lt)}
+.tag.check{color:var(--amber);border-color:#F0DCA8;background:var(--sun-lt)}
+.tag.off{color:var(--muted);border-color:var(--line);background:#F7F4EF}
+.tag.you{color:var(--teal-dk);border-color:#CBE0E0;background:var(--teal-lt)}
+.why{font-size:11.5px;color:var(--amber);display:block;margin-top:2px}
+
+/* ---------------- sheets ---------------- */
+.sheet{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:#FDFCF9}
+.sheet.on{background:#fff;border-color:#CBE0E0}
+.sheet .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sheet .nm{font-weight:600;color:var(--teal-dk)}
+.sheet .meta{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.sheet .hdr{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:6px;
+  background:#F7F4EF;border-radius:6px;padding:5px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sheet .offer{margin-top:7px;font-size:12.5px;color:var(--ink);display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+label.ck{display:inline-flex;gap:7px;align-items:center;cursor:pointer;font-size:13.5px}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--teal);cursor:pointer}
+
+/* ---------------- review cards ---------------- */
+.rev{border:1px solid #F3CFC0;border-left:4px solid var(--coral);border-radius:10px;padding:14px 16px;
+  margin-bottom:12px;background:#FFFBF9}
+.rev.settled{border-color:#CDE5D8;border-left-color:var(--green);background:var(--green-lt)}
+.rev .rt{font-family:var(--disp);font-size:15.5px;color:var(--ink);font-weight:600}
+.rev .rd{font-size:13px;color:var(--muted);margin-top:2px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin:11px 0}
+@media(max-width:640px){.pair{grid-template-columns:1fr}}
+.pc{background:#fff;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:13px}
+.pc .pn{font-weight:700;color:var(--teal-dk)}
+.pc .pl{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:3px}
+.pc .pe{font-family:var(--mono);font-size:11.5px;color:var(--ink);margin-top:5px;word-break:break-all}
+.opts{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.opt{border:1.5px solid var(--line);background:#fff;border-radius:8px;padding:7px 13px;cursor:pointer;
+  font-size:13px;font-family:var(--body);text-align:left}
+.opt:hover{border-color:var(--teal)}
+.opt.on{background:var(--teal);border-color:var(--teal);color:#fff;font-weight:600}
+.opt small{display:block;font-size:11px;opacity:.75;font-weight:400}
+.fixrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.fixrow input[type=text]{font-family:var(--mono);font-size:12.5px;min-width:230px}
+
+details{border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:10px;background:#FDFCF9}
+details[open]{background:#fff}
+summary{cursor:pointer;font-weight:600;color:var(--teal-dk);font-size:14px;list-style:none;
+  display:flex;justify-content:space-between;gap:10px;align-items:center}
+summary::-webkit-details-marker{display:none}
+summary .c{font-family:var(--mono);font-size:12px;color:var(--coral-dk);background:#FFF1EB;
+  border:1px solid #F3CFC0;border-radius:20px;padding:1px 9px}
+summary .c.q{color:var(--muted);background:#F7F4EF;border-color:var(--line)}
+.list{margin-top:10px;max-height:330px;overflow:auto}
+.li{font-size:13px;padding:5px 0;border-bottom:1px solid var(--line-2);display:flex;gap:9px}
+.li:last-child{border-bottom:none}
+.li .who{font-weight:600;min-width:150px}
+.li .where{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:auto;white-space:nowrap}
+
+.callout{background:var(--sun-lt);border:1px solid #F0DCA8;border-left:4px solid var(--sun);border-radius:9px;
+  padding:11px 15px;margin:0 0 15px;font-size:13px;line-height:1.6}
+.callout b{color:var(--amber)}
+.callout.teal{background:var(--teal-lt);border-color:#CBE0E0;border-left-color:var(--teal)}
+.callout.teal b{color:var(--teal-dk)}
+.err{background:var(--red-lt);border:1px solid #F0C4BE;border-left:4px solid var(--red);border-radius:9px;
+  padding:11px 15px;margin:12px 0;font-size:13px;color:var(--red)}
+.scroll{overflow-x:auto}
+.foot{text-align:center;color:var(--muted);font-size:12px;padding:0 0 40px}
+.pill{font-family:var(--mono);font-size:11px;background:#F7F4EF;border:1px solid var(--line);
+  border-radius:20px;padding:2px 9px;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="hd">
+      <div class="cam" aria-hidden="true">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2.2l1.1-1.8A1 1 0 0 1 8.7 4.7h6.6a1 1 0 0 1 .9.5L17.3 7h2.2A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"/>
+          <circle cx="12" cy="13" r="3.4"/>
+        </svg>
+      </div>
+      <div>
+        <div class="hd-eyebrow">Picture day prep</div>
+        <h1>School Photo Roster Fixer</h1>
+        <div class="hd-sub">Drop in whatever the school sent. Get back one clean row per student,
+          ready for GotPhoto &mdash; without ever merging two different kids.</div>
+      </div>
+    </div>
+    <div class="steps" id="steps">
+      <div class="step active" data-step="1"><span class="n">1</span> Upload</div>
+      <div class="step" data-step="2"><span class="n">2</span> Check the columns</div>
+      <div class="step" data-step="3"><span class="n">3</span> Fix &amp; review</div>
+      <div class="step" data-step="4"><span class="n">4</span> Download</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="main">
+  <div>
+    <!-- ---------------- 1. upload ---------------- -->
+    <div class="card" id="card1">
+      <h2>1 &middot; Drop the roster in</h2>
+      <div class="sub">Excel or CSV, however messy. Nothing is uploaded anywhere &mdash; the file is read
+        right here in your browser and the original is never changed.</div>
+      <div class="drop" id="drop">
+        <input type="file" id="file" accept=".xlsx,.xls,.csv,.txt,.tsv">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#12727A" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 16V4m0 0L8 8m4-4 4 4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+        </svg>
+        <div class="dt">Choose a file, or drag it here</div>
+        <div class="dd">.xlsx &middot; .xls &middot; .csv</div>
+        <div class="fname" id="fname"></div>
+      </div>
+      <div id="err1"></div>
+    </div>
+
+    <!-- ---------------- 2. sheets + mapping ---------------- -->
+    <div class="card locked" id="card2">
+      <h2>2 &middot; Check the columns <span class="badge" id="mapbadge"></span></h2>
+      <div class="sub">This is what the app thinks each column means. School systems all name things
+        differently, so change anything that looks wrong before it processes.</div>
+      <div id="sheets"></div>
+      <div id="mapping"></div>
+      <div class="btn-row">
+        <button class="btn btn-go" id="btn-fix">Clean it up</button>
+        <span class="hint" id="maphint"></span>
+      </div>
+    </div>
+
+    <!-- ---------------- 3. review ---------------- -->
+    <div class="card locked" id="card3">
+      <h2>3 &middot; Fix &amp; review</h2>
+      <div class="sub">Everything safe is already done. What is left is where two rows might be two
+        different children &mdash; those are yours to call.</div>
+      <div id="dash"></div>
+      <div id="reviews"></div>
+      <div id="warnings"></div>
+    </div>
+
+    <!-- ---------------- 4. download ---------------- -->
+    <div class="card locked" id="card4">
+      <h2>4 &middot; Download</h2>
+      <div class="sub">One workbook: the roster to import, everything that still needs a human, and a
+        report of what changed.</div>
+      <div id="dlinfo"></div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-dl">Download the cleaned file</button>
+        <label class="ck"><input type="checkbox" id="trace"> Include a source-trace sheet</label>
+      </div>
+      <div id="dlnote"></div>
+      <div id="audit" style="margin-top:16px"></div>
+    </div>
+  </div>
+
+  <!-- ---------------- sidebar ---------------- -->
+  <div class="aside">
+    <div class="polaroid">
+      <div class="win">
+        <div class="big" id="sb-count">&mdash;</div>
+        <div class="cap">students</div>
+      </div>
+      <div class="strip" id="sb-strip"></div>
+      <div class="note" id="sb-note">Upload a roster to see what is in it.</div>
+    </div>
+  </div>
+</div>
+<div class="foot">Runs entirely in your browser &middot; your roster never leaves this computer</div>
+</div>
+
+<script src="lib.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -118,6 +118,7 @@ table.q select:focus,table.q input:focus{outline:none;border-color:var(--coral)}
 .callout{background:#FFF6F6;border:1px solid var(--salmon-deep);border-left:4px solid var(--coral);border-radius:8px;
   padding:12px 16px;margin:0 0 18px;font-size:13px;color:var(--ink);line-height:1.6}
 .callout b{color:var(--navy)}
+.noteslist li{margin-bottom:7px;line-height:1.7}
 .pill{display:inline-block;white-space:nowrap;font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:12px;letter-spacing:.04em;vertical-align:middle}
 #tbl-canc td:nth-child(2){min-width:210px}
 .pill.skip{background:#EEF2F5;color:var(--muted)}
@@ -244,7 +245,7 @@ footer b{color:var(--navy)}
       <table class="q" id="tbl-exclude"></table>
     </div>
 
-    <details class="excl" id="notes-details" style="display:none"><summary>All admin notes this month (internal — never printed on the invoice)</summary><ul id="notes-list"></ul></details>
+    <details class="excl" id="notes-details" style="display:none"><summary>All admin notes this month (internal — never printed on the invoice)</summary><ul id="notes-list" class="noteslist"></ul></details>
 
     <div class="btn-row" id="q-actions" style="display:none">
       <button class="btn btn-primary" id="btn-build">Build the invoice</button>

@@ -119,6 +119,25 @@ table.q select:focus,table.q input:focus{outline:none;border-color:var(--coral)}
   padding:12px 16px;margin:0 0 18px;font-size:13px;color:var(--ink);line-height:1.6}
 .callout b{color:var(--navy)}
 .noteslist li{margin-bottom:7px;line-height:1.7}
+/* per-client invoice blocks (step 4) */
+.cl{border:1px solid var(--line);border-radius:10px;margin-bottom:16px;overflow:hidden}
+.cl.off{background:#FAFBFC}
+.cl-h{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;padding:13px 16px;background:#F7F9FB;border-bottom:1px solid var(--line)}
+.cl-h .nm{font-weight:700;color:var(--navy);font-size:15px}
+.cl-h .to{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.cl-h .amt{margin-left:auto;font-family:var(--mono);font-size:15px;font-weight:600;color:var(--navy)}
+.cl-meta{display:flex;flex-wrap:wrap;gap:7px;padding:10px 16px 0}
+.cl-b{padding:4px 16px 14px}
+.cl table{width:100%;border-collapse:collapse;font-size:12.7px}
+.cl table td{padding:5px 8px;border-bottom:1px solid #EFF3F6;vertical-align:top}
+.cl table tr:last-child td{border-bottom:none}
+.cl table td.q{font-family:var(--mono);text-align:right;white-space:nowrap;color:var(--muted)}
+.cl table td.a{font-family:var(--mono);text-align:right;white-space:nowrap}
+.cl table tr.done td{color:var(--muted)}
+.cl-add{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:11px 16px 2px;font-size:12.5px;color:var(--muted);border-top:1px dashed var(--line);margin-top:8px}
+.cl-add input[type=text]{flex:1;min-width:200px}
+.cl-add input{font-family:var(--mono);font-size:12.5px;padding:6px 8px;border:1.5px solid var(--line);border-radius:6px;background:#fff}
+.cl-note{padding:9px 16px 0;font-size:12.3px;color:var(--amber);font-style:italic}
 .pill{display:inline-block;white-space:nowrap;font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:12px;letter-spacing:.04em;vertical-align:middle}
 #tbl-canc td:nth-child(2){min-width:210px}
 .pill.skip{background:#EEF2F5;color:var(--muted)}
@@ -152,6 +171,7 @@ footer b{color:var(--navy)}
       <div class="step active" data-step="1"><span class="n">1</span> Upload exports</div>
       <div class="step" data-step="2"><span class="n">2</span> Answer questions</div>
       <div class="step" data-step="3"><span class="n">3</span> Download invoice</div>
+      <div class="step" data-step="4"><span class="n">4</span> Everyone else</div>
     </div>
   </div>
 </header>
@@ -187,6 +207,13 @@ footer b{color:var(--navy)}
         <div class="dd">bookings-Month-Year.xlsx — the Sitterwise operational export</div>
         <div class="fname" id="fname-book"></div>
         <input type="file" id="file-book" accept=".xlsx,.xls,.csv">
+      </label>
+      <label class="drop" id="drop-xero" style="grid-column:1 / -1">
+        <div class="ic">📗</div>
+        <div class="dt">Xero sales invoices <span style="font-weight:400;color:var(--muted)">(for everything that isn't Care.com)</span></div>
+        <div class="dd">Xero → Business → Invoices → Export. Twelve months is ideal. The app reads your own invoice history to learn each client's billing contact, rate, payment terms and line wording, and to see what you've already invoiced — no rate card to maintain. Without it, only the Care.com invoice gets built.</div>
+        <div class="fname" id="fname-xero"></div>
+        <input type="file" id="file-xero" accept=".csv">
       </label>
       <label class="drop" id="drop-mil" style="grid-column:1 / -1">
         <div class="ic">🚗</div>
@@ -264,6 +291,20 @@ footer b{color:var(--navy)}
       <button class="btn btn-primary" id="btn-download">Download the .xlsx</button>
       <p class="hint" style="margin-top:14px">Official template layout · live formulas · full formatting. Review it, then send it to Care.com yourself.</p>
     </div>
+  </section>
+
+  <!-- STEP 4 -->
+  <section class="card locked" id="card-clients">
+    <h2>Everyone else <span class="badge">step 4</span></h2>
+    <p class="sub">The invoiced jobs that aren't Care.com, grouped by who gets the bill. Contact, rate, payment terms and line wording come from each client's own Xero history — not from the bookings export, whose <span class="mono">Charge to Client</span> can carry the wrong rate.</p>
+    <div class="chips" id="client-chips"></div>
+    <div id="clients-list"></div>
+    <details class="excl" id="cl-skipped" style="display:none"><summary>Not invoiced here (and why)</summary><ul id="cl-skipped-list" class="noteslist"></ul></details>
+    <div class="btn-row" id="cl-actions" style="display:none">
+      <button class="btn btn-primary" id="btn-xero">Download the Xero import CSV</button>
+      <span class="hint">Xero → Business → Invoices → Import. Everything lands as a draft for you to review.</span>
+    </div>
+    <div class="err" id="err-clients"></div>
   </section>
 
 </div>

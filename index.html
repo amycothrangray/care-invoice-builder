@@ -125,6 +125,7 @@ table.q select:focus,table.q input:focus{outline:none;border-color:var(--coral)}
 .callout{background:#FFF6F6;border:1px solid var(--salmon-deep);border-left:4px solid var(--coral);border-radius:8px;
   padding:12px 16px;margin:0 0 18px;font-size:13px;color:var(--ink);line-height:1.6}
 .callout b{color:var(--navy)}
+.callout a{color:var(--coral-dark);text-decoration:underline;text-underline-offset:2px;font-size:12px}
 .noteslist li{margin-bottom:7px;line-height:1.7}
 /* ask panel */
 #ask-q{width:100%;font-family:var(--body);font-size:14px;padding:11px 13px;border:1.5px solid var(--line);
@@ -196,7 +197,7 @@ footer b{color:var(--navy)}
   <div class="wrap">
     <div class="hd-eyebrow">Sitterwise, Inc. · Corporate — Invoiced</div>
     <h1>Care.com Invoice Builder</h1>
-    <p class="hd-sub">Drop the two monthly exports, answer the judgment calls, and download the finished invoice — official template, live formulas, salmon columns and all.</p>
+    <p class="hd-sub">Drop this month's exports, answer the judgment calls, and download the finished invoice — official template, live formulas, salmon columns and all.</p>
     <div class="steps" id="steps">
       <div class="step active" data-step="1"><span class="n">1</span> Upload exports</div>
       <div class="step" data-step="2"><span class="n">2</span> Answer questions</div>
@@ -212,16 +213,11 @@ footer b{color:var(--navy)}
 
   <!-- STEP 1 -->
   <section class="card" id="card-upload">
-    <h2>The two exports <span class="badge">step 1</span></h2>
-    <p class="sub">Same two files as every month. The Care.com export is the billing source of truth (jobs, bonuses, cancellations); the bookings export supplies client names and mileage.</p>
+    <h2>This month's exports <span class="badge">step 1</span></h2>
+    <p class="sub">Two required, two optional. The Care.com export is the billing source of truth (jobs, bonuses, cancellations); bookings supplies client names; the mileage form gives exact miles; the Xero export drives everything that isn't Care.com.</p>
     <div class="callout">
-      <b>Pull the Care.com export with <u>both</u> cancelled and active/completed jobs.</b>
-      Don't filter it to one status. The cancelled rows are what give each cancellation
-      Care.com's own job ID and a cancellation timestamp — that timestamp is what sets
-      the &gt;24 hr / &lt;24 hr fee automatically instead of you guessing, and it proves
-      which cancellations were reassigned and already billed as worked. A completed-only
-      export still builds, but every cancellation falls back to the bookings file with a
-      Sitterwise booking number and no notice time.
+      <b>Pull the Care.com export with <u>both</u> cancelled and active/completed jobs</b> — don't filter it to one status.
+      <a href="https://github.com/amycothrangray/care-invoice-builder#pulling-the-exports" target="_blank" rel="noopener">Why</a>
     </div>
     <div class="drops">
       <label class="drop" id="drop-care">

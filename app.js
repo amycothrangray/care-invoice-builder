@@ -411,7 +411,8 @@ function analyze(careWB, bookWB, milWB) {
   S.lifesavers = corp.filter(r => r.lifesaver > 0).map(r => ({client:r.client, date:r.date, cg:r.cg, amt:r.lifesaver}));
 
   // admin notes across all corporate rows (guidance only — never written to the invoice)
-  S.adminNotes = corp.filter(r => r.note).map(r => ({ client:r.client, date:r.date, cg:r.cg, status:r.status, note:r.note }));
+  S.adminNotes = corp.filter(r => r.note).map(r => ({ client:r.client, date:r.date, cg:r.cg, status:r.status,
+    note:r.note, jobs:r.jobs, bk:String(r.bk), hasJobNo:!!r.jobRaw }));
 
   // ---- cancellations ----
   // Two sources now. The Care export's own cancelled rows are authoritative: they
@@ -443,8 +444,10 @@ function analyze(careWB, bookWB, milWB) {
     }
     if (paidKeys.has(r.client+"|"+r.date+"|"+r.start)) { excluded.push({why:"shadow", label:`${r.client} ${r.date.slice(5)} — job was reassigned and worked (already billed as completed)`}); continue; }
     if (!r.cg) { excluded.push({why:"nofill", label:`${r.client} ${r.date ? r.date.slice(5) : ""} — no caregiver assigned (agency couldn't fill; no fee)`}); continue; }
-    billable.push({ src:"book", bk:String(r.bk), careId:"", client:r.client, date:r.date, start:r.start,
-      hrs:r.hrs||0, cg:r.cg, stamp:null, multi:"", state:"CA", note:r.note||"" });
+    // Cancelled in Sitterwise but absent from the Care.com export. The only ID we have
+    // for it is a Sitterwise booking number, which will never match a Care.com job —
+    // Care.com can't pay a line it can't identify, so it does not go on the invoice.
+    excluded.push({why:"notincare", label:`${r.client} ${r.date ? r.date.slice(5) : ""} (${r.cg}) — cancelled in Sitterwise but not in the Care.com export${r.jobRaw ? `; booking #${r.bk} lists job ${r.jobRaw}` : `; booking #${r.bk} has no Care.com job number`} — not billable`});
   }
 
   // double-staffed: same client+date+start with 2+ billable rows → keep one, note it
@@ -613,7 +616,22 @@ function renderQuestions(extra) {
   $("excl-list").innerHTML = (S.cancExcluded.map(e=>`<li>${e.label}</li>`).concat(extraExcl.map(t=>`<li>${t}</li>`))).join("") || "<li>Nothing was excluded.</li>";
   $("excl-details").style.display = (S.cancExcluded.length || S.lifesavers.length) ? "block" : "none";
   if (S.adminNotes.length) {
-    $("notes-list").innerHTML = S.adminNotes.map(n=>`<li><b>${esc(n.client)}</b> ${n.date.slice(5)} (${esc(n.cg||"—")}, ${esc(n.status)}): ${esc(n.note)}</li>`).join("");
+    // Say plainly whether each noted booking actually reached the invoice — the notes
+    // are where "invoice this to someone else" gets written down, so "is it on there?"
+    // needs to be answerable without cross-referencing anything.
+    const onJobs = new Set(S.jobs.filter(j=>!S.excludeJobs.has(j.jid)).map(j=>j.jid));
+    const onCanc = new Set(S.cancBillable.filter(c=>c.mode!=="none").map(c=>String(c.bk)));
+    const verdict = n => {
+      const hit = n.jobs.find(j=>onJobs.has(j));
+      if (hit) return {cls:"multi", txt:`on the invoice · job ${hit}`};
+      if (n.jobs.some(j=>onCanc.has(j)) || onCanc.has(n.bk)) return {cls:"multi", txt:"on the invoice · cancellation"};
+      if (!n.hasJobNo) return {cls:"skip", txt:"not on the invoice · no Care.com job number"};
+      return {cls:"skip", txt:"not on the invoice · no matching job in the Care export"};
+    };
+    $("notes-list").innerHTML = S.adminNotes.map(n=>{
+      const v = verdict(n);
+      return `<li><span class="pill ${v.cls}">${v.txt}</span> <b>${esc(n.client)}</b> ${n.date.slice(5)} (${esc(n.cg||"—")}, ${esc(n.status)}): ${esc(n.note)}</li>`;
+    }).join("");
     $("notes-details").style.display = "block";
   } else $("notes-details").style.display = "none";
 

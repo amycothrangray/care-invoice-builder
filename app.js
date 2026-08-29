@@ -26,7 +26,7 @@
 "use strict";
 
 const S = {
-  careFile: null, bookFile: null, milFile: null,
+  careFile: null, bookFile: null, milFile: null, xeroFile: null,
   jobs: [],            // completed/active Care.com jobs (Status != Cancelled)
   cancBillable: [],    // billable cancellations (with UI decisions)
   cancExcluded: [],    // {why, label}
@@ -37,12 +37,15 @@ const S = {
   adminNotes: [],      // internal guidance only — never written to the invoice
   dblBill: [],         // completed jobs that may duplicate a billed cancellation
   milSkipped: [],      // mileage form entries that don't belong on this invoice
+  milCol: "", milBlank: 0,
   milSource: "none",   // "book" (bookings mileage cols) · "form" (Cognito) · "reimb" (estimate)
   lifesavers: [],      // Sitterwise lifesaver bonuses — never billed to Care.com
   careHasStatus: false,// did the Care export carry a Status column?
   oddStatus: [],       // Care rows with a status that is neither done/completed nor cancelled
   excludeJobs: new Set(), // completed Care jobs excluded from the invoice (not actually worked)
   built: null,         // {blob, filename, total}
+  clientInvoices: [],  // step 4 — one draft per non-Care.com Xero contact
+  clientSkipped: [],   // non-Care rows with no matching Xero client
 };
 
 const $ = id => document.getElementById(id);
@@ -70,7 +73,16 @@ function wireDrop(dropId, inputId, nameId, key) {
 wireDrop("drop-care","file-care","fname-care","careFile");
 wireDrop("drop-book","file-book","fname-book","bookFile");
 wireDrop("drop-mil","file-mil","fname-mil","milFile");
+wireDrop("drop-xero","file-xero","fname-xero","xeroFile");
 
+function readText(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = e => res(e.target.result);
+    r.onerror = () => rej(new Error("Could not read " + file.name));
+    r.readAsText(file);
+  });
+}
 function readWB(file) {
   return new Promise((res, rej) => {
     const r = new FileReader();
@@ -161,8 +173,11 @@ function isoWeek(dstr){ const d=new Date(dstr+"T12:00:00"); const t=new Date(d);
 $("btn-analyze").addEventListener("click", async () => {
   const errBox = $("err-upload"); errBox.style.display="none";
   try {
-    const [careWB, bookWB, milWB] = await Promise.all([readWB(S.careFile), readWB(S.bookFile), S.milFile ? readWB(S.milFile) : Promise.resolve(null)]);
-    analyze(careWB, bookWB, milWB);
+    const [careWB, bookWB, milWB, xeroTxt] = await Promise.all([
+      readWB(S.careFile), readWB(S.bookFile),
+      S.milFile ? readWB(S.milFile) : Promise.resolve(null),
+      S.xeroFile ? readText(S.xeroFile) : Promise.resolve(null)]);
+    analyze(careWB, bookWB, milWB, xeroTxt);
   } catch(e) {
     errBox.textContent = "Couldn't read the files: " + e.message + " — make sure these are the two monthly .xlsx exports.";
     errBox.style.display = "block";
@@ -174,25 +189,49 @@ function sheetRows(wb) {
   return XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:null});
 }
 
+/* The Cognito mileage-request export. Column names on this form have changed
+   before, so match them generously — and when the miles column genuinely can't
+   be found, say so with the headers we DID see. Silently defaulting the miles to
+   0 is how a whole month of mileage reached the invoice blank: the job numbers
+   still matched, so every row looked like a healthy "form submission". */
 function parseMileageForm(wb) {
   const rows = sheetRows(wb);
-  if (!rows.length) return [];
-  const hdr = rows[0].map(h => String(h||"").toLowerCase());
-  const find = re => hdr.findIndex(h => re.test(h));
-  const jc = find(/job/), nc = find(/name/), oc = find(/over/), tc = find(/total number|number of miles/), ac = find(/amount/);
-  if (jc === -1) throw new Error('mileage file: no "Care.com Job #" column found — is this the mileage request export?');
-  const out = [];
-  for (let i=1;i<rows.length;i++){
+  if (!rows.length) throw new Error("the mileage file has no rows");
+  // the header row isn't always row 1 (Cognito can emit a title/filter row first)
+  let hi = rows.findIndex(r => (r||[]).some(c => /job/i.test(String(c ?? ""))));
+  if (hi === -1) hi = 0;
+  const raw = (rows[hi]||[]).map(h => String(h ?? "").trim());
+  const hdr = raw.map(h => h.toLowerCase().replace(/\s+/g," "));
+  const find = (...pats) => { for (const re of pats) { const i = hdr.findIndex(h => re.test(h)); if (i > -1) return i; } return -1; };
+
+  const jc = find(/care\.?com job/, /job\s*#/, /job number/, /job/);
+  if (jc === -1) throw new Error(`mileage file: no job-number column. Headers found: ${raw.filter(Boolean).join(" | ") || "(none)"}`);
+  const nc = find(/caregiver name/, /your name/, /name/);
+  const ac = find(/amount/, /reimburse/, /\$/);
+  // miles, best first: an explicit over-40 figure, then a billable/payable figure,
+  // then a round-trip total we can subtract the 40-mile threshold from.
+  const oc = find(/over\s*40/, /miles over/, /over/, /billable/, /payable/, /excess/);
+  const tc = find(/total number/, /number of miles/, /total miles/, /round.?trip/, /^miles$/, /miles driven/, /mileage/, /miles/);
+  if (oc === -1 && tc === -1)
+    throw new Error(`mileage file: found the job column but no miles column, so every job would import as 0 miles. Headers found: ${raw.filter(Boolean).join(" | ")}`);
+
+  const used = oc > -1 ? raw[oc] : raw[tc] + " (minus the 40-mile threshold)";
+  const out = []; let blank = 0;
+  for (let i=hi+1;i<rows.length;i++){
     const r = rows[i]; if (!r || r[jc]==null || String(r[jc]).trim()==="") continue;
     const total = tc>-1 ? money2num(r[tc]) : 0;
     let over = oc>-1 ? money2num(r[oc]) : 0;
     if (!over && total) over = Math.max(Math.round(total-40), 0);
+    if (!over) blank++;
     out.push({ job:String(r[jc]).trim(), name: nc>-1?cleanName(r[nc]):"", over, total, amt: ac>-1?money2num(r[ac]):0 });
   }
+  if (out.length && blank === out.length)
+    throw new Error(`mileage file: read ${out.length} submission(s) from “${used}” but every one came out at 0 billable miles — that column doesn't hold the mileage. Headers found: ${raw.filter(Boolean).join(" | ")}`);
+  out.milesCol = used; out.blank = blank;
   return out;
 }
 
-function analyze(careWB, bookWB, milWB) {
+function analyze(careWB, bookWB, milWB, xeroTxt) {
   const care = sheetRows(careWB);
   const book = sheetRows(bookWB);
 
@@ -202,6 +241,7 @@ function analyze(careWB, bookWB, milWB) {
     bk:     bc("booking id"),
     jobno:  bc("care.com job number","care.com job #","care job number"),
     client: bc("client name"),
+    email:  bc("client email"),
     svc:    bc("service type"),
     date:   bc("start date"),
     start:  bc("start time"),
@@ -235,7 +275,7 @@ function analyze(careWB, bookWB, milWB) {
     const hrsB = money2num(at(r,IDX.hrsB)), hrsW = money2num(at(r,IDX.hrsW));
     bRows.push({
       bk: at(r,IDX.bk), jobs: jobNums(at(r,IDX.jobno)), jobRaw: String(at(r,IDX.jobno) ?? "").trim(),
-      client: cleanName(at(r,IDX.client)),
+      client: cleanName(at(r,IDX.client)), email: String(at(r,IDX.email) ?? "").trim(),
       svc: String(at(r,IDX.svc)||"").trim(),
       date: isoDate(at(r,IDX.date)), start: hhmm(at(r,IDX.start)), end: hhmm(at(r,IDX.end)),
       hrs: hrsB || hrsW, hrsWorked: hrsW || hrsB,
@@ -349,6 +389,7 @@ function analyze(careWB, bookWB, milWB) {
   const milEntries = milWB ? parseMileageForm(milWB) : null;
   if (milEntries) {
     S.milSource = "form";
+    S.milCol = milEntries.milesCol || ""; S.milBlank = milEntries.blank || 0;
     const byJid = new Map(jobs.map(j=>[j.jid, j]));
     const bkMap = new Map(bRows.map(r=>[String(r.bk), r]));
     const seenJid = new Set();
@@ -506,7 +547,19 @@ function analyze(careWB, bookWB, milWB) {
   jobs.forEach(j => { const k=j.cg+"|"+isoWeek(j.date); wk[k]=(wk[k]||0)+Math.min(j.hrs,8); });
   S.weeklyOTWarn = Object.entries(wk).filter(([,v])=>v>40).map(([k,v])=>k.split("|")[0]+" ("+v.toFixed(1)+"h)");
 
+  // ---- step 4: every invoiced job that isn't Care.com ----
+  S.clientInvoices = []; S.clientSkipped = [];
+  if (xeroTxt) {
+    const isCare = r => r.jobs.length > 0 || /@care\.com$/i.test(r.email);
+    const nonCare = bRows.filter(r => (r.svc === "Corporate (Invoiced)" || r.svc === "Group Childcare (Invoiced)")
+                                      && !isCare(r) && r.date && r.date.slice(0,7) === ym);
+    const learned = learnClients(parseCSV(xeroTxt));
+    const built = buildClientInvoices(nonCare, learned, S.year, S.month); // month is 1-based -> the 1st of the NEXT month
+    S.clientInvoices = built.invoices; S.clientSkipped = built.skipped;
+  }
+
   renderQuestions({tips, mileageOffInvoice});
+  renderClients();
 }
 
 /* ---------------- questions UI ---------------- */
@@ -535,7 +588,9 @@ function renderQuestions(extra) {
     extra.tips.length ? `<span class="chip warn">⚠ ${extra.tips.length} tip(s) on corporate jobs — left OFF the invoice (route via OnPay)</span>` : "",
     extra.mileageOffInvoice.length ? `<span class="chip warn">${extra.mileageOffInvoice.length} mileage reimbursement(s) on jobs NOT in the Care export — excluded</span>` : "",
     S.jobs.some(j=>j.oddId) ? `<span class="chip warn">⚠ non-standard job ID: ${S.jobs.filter(j=>j.oddId).map(j=>j.jid).join(", ")} — confirm it's legit</span>` : "",
-    S.milSource==="form" ? `<span class="chip good">🚗 mileage form loaded: ${S.mileageCand.length} matched, ${S.milSkipped.length} skipped</span>` : `<span class="chip warn">no mileage form uploaded \u2014 mileage below is estimated from reimbursements</span>`,
+    S.milSource==="form" ? `<span class="chip good">🚗 mileage form: ${S.mileageCand.length} matched, ${S.milSkipped.length} skipped — miles read from “${esc(S.milCol)}”</span>` : `<span class="chip warn">no mileage form uploaded \u2014 mileage below is estimated from reimbursements</span>`,
+    (S.milSource==="form" && S.milBlank) ? `<span class="chip warn">⚠ ${S.milBlank} mileage submission(s) had no billable miles in “${esc(S.milCol)}” — they will bill $0 unless you type the miles in below</span>` : "",
+    S.mileageCand.some(m=>m.include && !m.miles) ? `<span class="chip warn">⚠ ${S.mileageCand.filter(m=>m.include && !m.miles).length} mileage row(s) are ticked but set to 0 miles — they add nothing to the invoice</span>` : "",
     S.dblBill.length ? `<span class="chip warn">⚠ ${S.dblBill.length} possible double-bill(s): a billed cancellation's caregiver also has a completed job that day — see below</span>` : "",
     S.adminNotes.length ? `<span class="chip note">📝 ${S.adminNotes.length} admin note(s) in the bookings file — shown next to the calls below</span>` : "",
     S.careHasStatus
@@ -855,6 +910,334 @@ async function buildWorkbook(a) {
   const buf = await wb.xlsx.writeBuffer();
   return { blob: new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), total: t.total };
 }
+
+/* ================================================================
+   STEP 4 — every invoiced client that isn't Care.com
+   The Xero sales-invoice export is the config: each client's billing
+   contact, rate, payment terms and line wording are read back out of
+   their own invoice history. The bookings export is NOT trusted for
+   price — its "Charge to Client" carries $42 (the Care.com rate) for
+   anything typed "Corporate (Invoiced)", including clients Xero has
+   always billed at $36.
+   ================================================================ */
+
+const GENERIC_DOMAINS = new Set(["email.com","gmail.com","yahoo.com","hotmail.com","outlook.com","icloud.com","care.com","aol.com","me.com"]);
+const NAME_STOP = new Set(["the","at","of","and","a","an","inc","llc","group","groups","campus","church","services","service","youth","family","families","community","center","centre","school","co"]);
+const domainOf = e => { const m = String(e||"").toLowerCase().match(/@([^@\s]+)$/); return m ? m[1] : ""; };
+const ARTICLES = new Set(["the","at","of","and","a","an","&"]);
+const rawTokens = n => String(n||"").toLowerCase().replace(/[^a-z0-9 ]+/g," ").split(/\s+/).filter(w=>w.length>1 && !ARTICLES.has(w));
+const nameTokens = n => rawTokens(n).filter(w=>!NAME_STOP.has(w));
+
+/* minimal RFC4180 CSV parse (quoted fields, embedded commas/newlines) */
+function parseCSV(text) {
+  const rows=[]; let row=[], cur="", q=false;
+  text = String(text).replace(/\r\n?/g,"\n");
+  for (let i=0;i<text.length;i++){
+    const c=text[i];
+    if (q) { if (c==='"'){ if (text[i+1]==='"'){cur+='"';i++;} else q=false; } else cur+=c; }
+    else if (c==='"') q=true;
+    else if (c===",") { row.push(cur); cur=""; }
+    else if (c==="\n") { row.push(cur); rows.push(row); row=[]; cur=""; }
+    else cur+=c;
+  }
+  if (cur!=="" || row.length) { row.push(cur); rows.push(row); }
+  if (!rows.length) return [];
+  const hdr = rows[0].map(h=>h.trim());
+  return rows.slice(1).filter(r=>r.some(c=>String(c).trim()!==""))
+             .map(r => Object.fromEntries(hdr.map((h,i)=>[h, r[i] ?? ""])));
+}
+
+const mdy = s => { const m=String(s||"").match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/); if(!m) return null;
+  const y=m[3].length===2?2000+ +m[3]:+m[3]; return new Date(y, +m[1]-1, +m[2]); };
+const fmtMDY = d => `${d.getMonth()+1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`;
+const usd = n => (Math.round(n*100)/100).toFixed(4);
+
+/* Learn one profile per Xero contact from their invoice history. */
+function learnClients(xrows) {
+  const byInv = new Map();
+  for (const r of xrows) {
+    if (!r.InvoiceNumber) continue;
+    if (!byInv.has(r.InvoiceNumber)) byInv.set(r.InvoiceNumber, []);
+    byInv.get(r.InvoiceNumber).push(r);
+  }
+  const profiles = new Map();
+  let maxNum = 0;
+  for (const [num, lines] of byInv) {
+    const nm = (num.match(/(\d+)\s*$/)||[])[1];
+    if (nm) maxNum = Math.max(maxNum, +nm);
+    const f = lines[0], contact = (f.ContactName||"").trim();
+    if (!contact) continue;
+    const date = mdy(f.InvoiceDate), due = mdy(f.DueDate);
+    let p = profiles.get(contact);
+    if (!p) { p = { contact, email:f.EmailAddress||"", addr:{...f}, invoices:0, lastDate:null,
+                    rate:0, terms:14, style:"date", quote:false, acct:"460", tax:f.TaxType||"Tax on Sales",
+                    cur:f.Currency||"USD", billed:[], rateVotes:new Map() };
+             profiles.set(contact, p); }
+    p.invoices++;
+    // service rates: positive per-unit amounts on quantity-priced lines
+    for (const l of lines) {
+      const u = parseFloat(l.UnitAmount)||0, q = parseFloat(l.Quantity)||0;
+      if (u > 0 && q > 1) p.rateVotes.set(u, (p.rateVotes.get(u)||0)+1);
+    }
+    // every M/D mentioned on this invoice — used to spot work already billed
+    const marks = new Set();
+    for (const l of lines) for (const m of String(l.Description||"").matchAll(/(\d{1,2})\/(\d{1,2})(?!\d)/g)) marks.add(+m[1]+"/"+ +m[2]);
+    if (date) p.billed.push({date, marks});
+    if (!p.lastDate || (date && date > p.lastDate)) {
+      p.lastDate = date; p.email = f.EmailAddress || p.email; p.addr = {...f}; p.acct = f.AccountCode || p.acct;
+      if (date && due) p.terms = Math.max(Math.round((due-date)/86400000), 0);
+      p.quote = /^QU-/i.test((f.Reference||"").trim());
+    }
+    const svc = lines.filter(l => (parseFloat(l.Quantity)||0) > 1);
+    if (svc.length && (!p.styleDate || (date && date > p.styleDate))) {
+      p.styleDate = date;
+      const descs = svc.map(l=>String(l.Description||""));
+      p.style = descs.some(d=>/^childcare services\s+\d{1,2}\//i.test(d)) ? "date"
+              : descs.some(d=>/^childcare services\s*[-:]/i.test(d))      ? "named"
+              : descs.some(d=>/^[A-Za-z'.-]+ [A-Z]/.test(d) && !/\d/.test(d)) ? "caregiver" : "date";
+      p.sample = descs[0] || "";
+    }
+  }
+  for (const p of profiles.values()) {
+    p.rate = [...p.rateVotes.entries()].sort((a,b)=>b[1]-a[1])[0]?.[0] || 36;
+  }
+  return { profiles, nextNum: maxNum + 1 };
+}
+
+/* Sitterwise client name/email -> Xero contact. */
+function matchContact(name, email, profiles) {
+  const e = String(email||"").trim().toLowerCase();
+  for (const p of profiles.values()) if (p.email && p.email.toLowerCase() === e) return {p, how:"email"};
+  const dom = domainOf(e);
+  if (dom && !GENERIC_DOMAINS.has(dom))
+    for (const p of profiles.values()) if (domainOf(p.email) === dom) return {p, how:"domain " + dom};
+  const t = nameTokens(name);
+  if (t.length) {
+    let best = null;
+    for (const p of profiles.values()) {
+      const u = nameTokens(p.contact);
+      if (!u.length) continue;
+      const shared = t.filter(w=>u.includes(w));
+      if (!shared.length) continue;
+      const score = shared.length / Math.min(t.length, u.length);
+      if (!best || score > best.score) best = {p, score, shared};
+    }
+    // 0.67 keeps every real match (they all score 1.0 — the contact's distinctive
+    // tokens are fully contained in the client name) and rejects a lone shared
+    // first name, e.g. "David Russo" vs "St. David's Episcopal Church" at 0.5.
+    if (best && best.score >= 0.67) return {p:best.p, how:"name “" + best.shared.join(" ") + "”"};
+  }
+  return null;
+}
+
+/* the part of the Sitterwise client name the Xero contact doesn't already say
+   ("Ymca East County Group" under "YMCA Youth & Family Services" -> "East County Group") */
+function subLabel(clientName, contactName) {
+  const u = new Set(rawTokens(contactName));
+  return String(clientName||"").split(/\s+/)
+    .filter(w => { const k = w.toLowerCase().replace(/[^a-z0-9]/g,""); return k && k.length>1 && !u.has(k) && !ARTICLES.has(k); })
+    .join(" ").trim();
+}
+
+/* Group the non-Care invoiced bookings into one draft invoice per Xero contact. */
+function buildClientInvoices(corpRows, learned, year, month) {
+  const {profiles, nextNum} = learned;
+  const skipped = [], invoices = [];
+  const groups = new Map();       // xero contact -> rows
+  for (const r of corpRows) {
+    const hit = matchContact(r.client, r.email, profiles);
+    if (!hit) { skipped.push({cls:"skip", txt:`${r.client} ${r.date ? r.date.slice(5) : ""} — no matching client in the Xero history, so there is no contact, rate or line wording to copy. Invoice this one by hand (or re-export Xero over a longer period).`}); continue; }
+    const key = hit.p.contact;
+    if (!groups.has(key)) groups.set(key, {p:hit.p, how:hit.how, rows:[]});
+    groups.get(key).rows.push(r);
+  }
+  let num = nextNum;
+  // billed on the 1st of the month after the work, matching the existing pattern
+  const invDate = new Date(year, month, 1);
+  for (const [contact, g] of [...groups.entries()].sort((a,b)=>a[0].localeCompare(b[0]))) {
+    const p = g.p;
+    const done = g.rows.filter(r=>r.status==="completed");
+    const canc = g.rows.filter(r=>r.status==="cancelled");
+    const other = g.rows.filter(r=>r.status!=="completed" && r.status!=="cancelled");
+    const lines = [];
+    if (p.style === "caregiver") {
+      const byCg = new Map();
+      for (const r of done) {
+        const k = r.cg || "Caregiver";
+        if (!byCg.has(k)) byCg.set(k, {hrs:0, dates:[]});
+        const e = byCg.get(k); e.hrs += r.hrs; e.dates.push(r.date);
+      }
+      for (const [cg,e] of [...byCg.entries()].sort((a,b)=>a[0].localeCompare(b[0])))
+        lines.push({ desc:cg, qty:e.hrs, rate:p.rate, dates:[e.dates.sort()[0]] });
+    } else if (p.style === "named") {
+      for (const r of done.sort((a,b)=>a.date.localeCompare(b.date)||a.start.localeCompare(b.start))) {
+        const d = atTime(r.date, "12:00");
+        lines.push({ desc:`Childcare Services - ${r.client} ${fmtMDY(d)} ${fmt12(r.start)}-${fmt12(r.end)}`,
+                     qty:r.hrs, rate:p.rate, dates:[r.date] });
+      }
+    } else {
+      const byKey = new Map();
+      for (const r of done) {
+        const label = subLabel(r.client, contact);
+        const k = r.date + "|" + label;
+        if (!byKey.has(k)) byKey.set(k, {date:r.date, label, hrs:0, cgs:new Set()});
+        const e = byKey.get(k); e.hrs += r.hrs; if (r.cg) e.cgs.add(r.cg);
+      }
+      for (const e of [...byKey.values()].sort((a,b)=>a.date.localeCompare(b.date)||a.label.localeCompare(b.label))) {
+        const n = Math.max(e.cgs.size, 1);
+        const d = atTime(e.date, "12:00");
+        const each = e.hrs / n;
+        lines.push({ desc:`Childcare Services ${d.getMonth()+1}/${d.getDate()}${e.label ? " "+e.label : ""} (${n} caregiver${n>1?"s":""} x ${+each.toFixed(2)} hours)`,
+                     qty:e.hrs, rate:p.rate, dates:[e.date] });
+      }
+    }
+    // anything whose service date already appears on one of this client's invoices
+    for (const l of lines) {
+      const d = atTime(l.dates[0], "12:00"), mark = (d.getMonth()+1)+"/"+d.getDate();
+      const prior = p.billed.find(b => b.date >= d && b.marks.has(mark));
+      if (prior) { l.already = true; l.priorOn = fmtMDY(prior.date); }
+    }
+    const total = lines.filter(l=>!l.already).reduce((a,l)=>a+l.qty*l.rate, 0);
+    invoices.push({
+      contact, p, how:g.how, style:p.style, quote:p.quote,
+      num: "INV-" + (num++), invDate, dueDate: new Date(invDate.getTime() + p.terms*86400000),
+      lines, canc, other, total,
+      include: !p.quote && lines.some(l=>!l.already),
+      extra: {desc:"", amt:""},
+    });
+  }
+  return {invoices, skipped};
+}
+
+/* Xero sales-invoice import CSV — the same 43 columns their export uses. */
+const XCOLS = ["ContactName","EmailAddress","POAddressLine1","POAddressLine2","POAddressLine3","POAddressLine4","POCity","PORegion","POPostalCode","POCountry","SAAddressLine1","SAAddressLine2","SAAddressLine3","SAAddressLine4","SACity","SARegion","SAPostalCode","SACountry","InvoiceNumber","Reference","InvoiceDate","DueDate","PlannedDate","Total","TaxTotal","InvoiceAmountPaid","InvoiceAmountDue","InventoryItemCode","Description","Quantity","UnitAmount","Discount","LineAmount","AccountCode","TaxType","TaxAmount","TrackingName1","TrackingOption1","TrackingName2","TrackingOption2","Currency","Type","Sent","Status"];
+const csvCell = v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+
+function buildXeroCSV() {
+  const out = [XCOLS.join(",")];
+  for (const inv of S.clientInvoices) {
+    if (!inv.include) continue;
+    const rows = inv.lines.filter(l=>!l.already).map(l=>({desc:l.desc, qty:l.qty, rate:l.rate}));
+    const ex = inv.extra;
+    if (ex.desc.trim() && parseFloat(ex.amt)) rows.push({desc:ex.desc.trim(), qty:1, rate:parseFloat(ex.amt)});
+    if (!rows.length) continue;
+    const total = rows.reduce((a,r)=>a + r.qty*r.rate, 0);
+    for (const r of rows) {
+      const rec = Object.fromEntries(XCOLS.map(c=>[c,""]));
+      const a = inv.p.addr || {};
+      rec.ContactName = inv.contact; rec.EmailAddress = inv.p.email;
+      for (const k of ["POAddressLine1","POCity","PORegion","POPostalCode","POCountry","SAAddressLine1","SACity","SARegion","SAPostalCode","SACountry"]) rec[k] = a[k] || "";
+      rec.InvoiceNumber = inv.num;
+      rec.InvoiceDate = fmtMDY(inv.invDate); rec.DueDate = fmtMDY(inv.dueDate);
+      rec.Total = usd(total); rec.TaxTotal = usd(0); rec.InvoiceAmountPaid = usd(0); rec.InvoiceAmountDue = usd(total);
+      rec.Description = r.desc; rec.Quantity = usd(r.qty); rec.UnitAmount = usd(r.rate); rec.LineAmount = usd(r.qty*r.rate);
+      rec.AccountCode = inv.p.acct || "460"; rec.TaxType = inv.p.tax || "Tax on Sales"; rec.TaxAmount = usd(0);
+      rec.Currency = inv.p.cur || "USD"; rec.Type = "Sales invoice"; rec.Sent = "Unsent"; rec.Status = "Draft";
+      out.push(XCOLS.map(c=>csvCell(rec[c])).join(","));
+    }
+  }
+  return out.join("\n") + "\n";
+}
+
+/* ---------------- step 4 UI ---------------- */
+function renderClients() {
+  const card = $("card-clients");
+  if (!S.clientInvoices.length && !S.clientSkipped.length) {
+    card.classList.add("locked");
+    $("clients-list").innerHTML = `<p class="hint">Upload your Xero sales-invoice export in step 1 and every invoiced client that isn't Care.com shows up here.</p>`;
+    $("cl-actions").style.display = "none"; $("cl-skipped").style.display = "none"; $("client-chips").innerHTML = "";
+    return;
+  }
+  card.classList.remove("locked");
+
+  const live = S.clientInvoices.filter(i=>i.include);
+  const already = S.clientInvoices.reduce((a,i)=>a + i.lines.filter(l=>l.already).length, 0);
+  const cancN = S.clientInvoices.reduce((a,i)=>a + i.canc.length, 0);
+  $("client-chips").innerHTML = [
+    `<span class="chip"><b>${S.clientInvoices.length}</b> client${S.clientInvoices.length===1?"":"s"}</span>`,
+    `<span class="chip"><b>${live.length}</b> invoice${live.length===1?"":"s"} to send</span>`,
+    `<span class="chip good">rates read from your Xero history</span>`,
+    already ? `<span class="chip good">${already} line(s) already invoiced — left off</span>` : "",
+    S.clientInvoices.some(i=>i.quote) ? `<span class="chip warn">⚠ ${S.clientInvoices.filter(i=>i.quote).length} quote-billed client(s) — not generated, see below</span>` : "",
+    cancN ? `<span class="chip warn">${cancN} cancelled booking(s) — add a fee line only if you agreed one</span>` : "",
+    S.clientSkipped.length ? `<span class="chip warn">⚠ ${S.clientSkipped.length} booking(s) with no Xero client</span>` : "",
+  ].filter(Boolean).join("");
+
+  $("clients-list").innerHTML = S.clientInvoices.map((inv,i)=>{
+    const rows = inv.lines.map(l=>`<tr class="${l.already?"done":""}">
+        <td>${esc(l.desc)}${l.already?` <span class="pill skip" title="A line for this service date is already on an invoice dated ${l.priorOn}">already invoiced ${esc(l.priorOn)}</span>`:""}</td>
+        <td class="q">${(+l.qty.toFixed(2))} × ${money(l.rate)}</td>
+        <td class="a">${l.already?"—":money(l.qty*l.rate)}</td></tr>`).join("");
+    const meta = [
+      `<span class="pill multi" title="How this booking's client was matched to a Xero contact">matched by ${esc(inv.how)}</span>`,
+      `<span class="pill skip">${money(inv.p.rate)}/hr from ${inv.p.invoices} past invoice${inv.p.invoices===1?"":"s"}</span>`,
+      `<span class="pill skip">net ${inv.p.terms}</span>`,
+      `<span class="pill skip">${esc(inv.num)} · ${fmtMDY(inv.invDate)}</span>`,
+    ].join(" ");
+    const quoteNote = inv.quote
+      ? `<div class="cl-note">Billed from a quote, not from hours — the last invoice referenced ${esc((inv.p.addr.Reference||"a quote").trim())} and its line quantities didn't come from the bookings. Left out of the CSV; invoice this one the way you always do.</div>` : "";
+    const cancNote = inv.canc.length
+      ? `<div class="cl-note">${inv.canc.length} cancelled booking(s) this month: ${esc(inv.canc.map(c=>`${c.date.slice(5)} ${c.cg||"unassigned"}`).join(", "))}. Nothing is billed for these unless you add a line below.</div>` : "";
+    const otherNote = inv.other.length
+      ? `<div class="cl-note">${inv.other.length} booking(s) still ${esc([...new Set(inv.other.map(o=>o.status))].join("/"))} — not invoiced.</div>` : "";
+    return `<div class="cl${inv.include?"":" off"}">
+      <div class="cl-h">
+        <label style="display:flex;gap:9px;align-items:center;cursor:pointer">
+          <input type="checkbox" class="inp-clinc" data-ci="${i}"${inv.include?" checked":""}${inv.quote?" disabled":""}>
+          <span class="nm">${esc(inv.contact)}</span>
+        </label>
+        <span class="to">${esc(inv.p.email||"no email on file")}</span>
+        <span class="amt" data-cltot="${i}">${money(inv.total)}</span>
+      </div>
+      <div class="cl-meta">${meta}</div>
+      ${quoteNote}${cancNote}${otherNote}
+      <div class="cl-b"><table>${rows || `<tr><td colspan="3" class="hint">Nothing new to invoice this month.</td></tr>`}</table>
+        <div class="cl-add">
+          <span>Extra line</span>
+          <input type="text" class="inp-clx" data-ci="${i}" placeholder="e.g. Cancellation Fee: 8/14 (1 caregiver x 6 hours) — or Resort Fee">
+          <input type="number" class="inp-clxa" data-ci="${i}" step="0.01" placeholder="amount" style="width:110px">
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+
+  if (S.clientSkipped.length) {
+    $("cl-skipped").style.display = "block";
+    $("cl-skipped-list").innerHTML = S.clientSkipped.map(x=>`<li><span class="pill ${x.cls}">no Xero client</span> ${esc(x.txt)}</li>`).join("");
+  } else $("cl-skipped").style.display = "none";
+
+  $("cl-actions").style.display = S.clientInvoices.some(i=>i.include) ? "flex" : "none";
+  document.querySelectorAll(".inp-clinc,.inp-clx,.inp-clxa").forEach(el=>el.addEventListener("input", syncClients));
+}
+
+function syncClients() {
+  document.querySelectorAll(".inp-clinc").forEach(cb=>{ S.clientInvoices[+cb.dataset.ci].include = cb.checked; });
+  document.querySelectorAll(".inp-clx").forEach(inp=>{ S.clientInvoices[+inp.dataset.ci].extra.desc = inp.value; });
+  document.querySelectorAll(".inp-clxa").forEach(inp=>{ S.clientInvoices[+inp.dataset.ci].extra.amt = inp.value; });
+  S.clientInvoices.forEach((inv,i)=>{
+    const ex = (inv.extra.desc.trim() && parseFloat(inv.extra.amt)) ? parseFloat(inv.extra.amt) : 0;
+    const base = inv.lines.filter(l=>!l.already).reduce((a,l)=>a+l.qty*l.rate, 0);
+    inv.total = Math.round((base+ex)*100)/100;
+    const el = document.querySelector(`[data-cltot="${i}"]`); if (el) el.textContent = money(inv.total);
+    const box = document.querySelectorAll(".cl")[i]; if (box) box.classList.toggle("off", !inv.include);
+  });
+  $("cl-actions").style.display = S.clientInvoices.some(i=>i.include) ? "flex" : "none";
+}
+
+$("btn-xero").addEventListener("click", ()=>{
+  const err = $("err-clients"); err.style.display = "none";
+  try {
+    syncClients();
+    const csv = buildXeroCSV();
+    if (csv.trim().split("\n").length < 2) throw new Error("nothing selected to invoice");
+    const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `Sitterwise_XeroImport_${MONTHS[S.month-1]}${S.year}.csv`; a.click();
+    URL.revokeObjectURL(url);
+    setStep(4);
+  } catch(e) { err.textContent = "Couldn't build the CSV: " + e.message; err.style.display = "block"; }
+});
 
 /* ---------------- stepper ---------------- */
 function setStep(n) {

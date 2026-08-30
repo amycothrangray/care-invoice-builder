@@ -1,5 +1,5 @@
-/* Sitterwise → Care.com Invoice Builder
-   All logic runs client-side. Rules mirror the monthly workflow:
+/* Sitterwise Invoice Builder — the Care.com invoice, then every other
+   invoiced client. All logic runs client-side. Rules mirror the monthly workflow:
    $42/hr (editable) · CA daily OT 1.5× over 8h/day · 4-hr minimum ·
    mileage over 40mi RT at $0.76/mi (editable) · cancellation reconciliation
    with reassignment-shadow + couldn't-fill exclusion and multi-day grouping.

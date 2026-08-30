@@ -3,18 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sitterwise · Care.com Invoice Builder</title>
+<title>Sitterwise Invoice Builder</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{
-  --navy:#16324A; --navy-deep:#0E2233; --coral:#E4643B; --coral-dark:#C74E2A;
-  --paper:#F4F6F8; --card:#FFFFFF; --ink:#1B2733; --muted:#5B6B7A;
-  --salmon:#FFCCCC; --salmon-deep:#F5B8B8; --line:#DCE3E9; --green:#2E7D5B;
-  --amber:#B07C1F; --red:#B3372B;
-  --mono:'IBM Plex Mono',monospace; --body:'Public Sans',sans-serif; --disp:'Fraunces',serif;
+  /* The documented Sitterwise palette. These exact values only — the coral is a
+     PINK coral; an orange-leaning one reads as terracotta, which is not a
+     Sitterwise colour. (The invoice's own salmon #FFCCCC is Care.com's template
+     spec, lives in app.js, and is unrelated to this palette.) */
+  --navy:#1B3A5C; --navy-deep:#12283F; --coral:#F48A91; --coral-dark:#E96F77;
+  --teal:#84D0D2; --teal-deep:#5FBFC2; --teal-pale:#E8F5F5; --teal-line:#C6E7E7;
+  --paper:#F7FAFB; --card:#FFFFFF; --ink:#22333F; --muted:#5A6B73;
+  --salmon:#FDF0F1; --salmon-deep:#F9D7DA; --line:#E3EAEE; --green:#3E9C86;
+  --red:#C9484F;
+  --mono:'IBM Plex Mono',monospace; --body:'Poppins',sans-serif; --disp:'Poppins',sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
@@ -24,9 +29,9 @@ body{font-family:var(--body);background:var(--paper);color:var(--ink);font-size:
 /* ---------- header ---------- */
 header{background:var(--navy);color:#fff;padding:34px 0 30px;position:relative;overflow:hidden}
 header::after{content:"";position:absolute;right:-40px;top:-40px;width:280px;height:280px;border-radius:50%;
-  background:radial-gradient(circle at 30% 30%, rgba(228,100,59,.25), transparent 65%)}
-.hd-eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--salmon)}
-h1{font-family:var(--disp);font-weight:700;font-size:clamp(26px,3.4vw,38px);margin:6px 0 4px}
+  background:radial-gradient(circle at 30% 30%, rgba(244,138,145,.28), transparent 65%)}
+.hd-eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal)}
+h1{font-family:var(--disp);font-weight:700;font-size:clamp(26px,3.4vw,38px);margin:6px 0 4px;letter-spacing:-.01em}
 .hd-sub{color:#C9D5DF;max-width:640px}
 .steps{display:flex;gap:0;margin-top:22px;border:1px solid rgba(255,255,255,.25);border-radius:10px;overflow:hidden;width:fit-content}
 .step{padding:8px 18px;font-family:var(--mono);font-size:12.5px;letter-spacing:.05em;color:#9FB2C0;background:transparent;display:flex;gap:8px;align-items:center;border-right:1px solid rgba(255,255,255,.18)}
@@ -34,7 +39,7 @@ h1{font-family:var(--disp);font-weight:700;font-size:clamp(26px,3.4vw,38px);marg
 .step.active{background:var(--coral);color:#fff}
 .step.done{color:#fff}
 .step .n{width:18px;height:18px;border-radius:50%;border:1.5px solid currentColor;display:inline-flex;align-items:center;justify-content:center;font-size:10.5px}
-.step.done .n{background:#fff;color:var(--navy);border-color:#fff}
+.step.done .n{background:var(--teal);color:var(--navy-deep);border-color:var(--teal)}
 
 /* ---------- layout ---------- */
 .main{display:grid;grid-template-columns:1fr 264px;gap:28px;padding:30px 0 80px;align-items:start}
@@ -60,8 +65,9 @@ h1{font-family:var(--disp);font-weight:700;font-size:clamp(26px,3.4vw,38px);marg
 .tape-note{padding:0 16px 14px;font-size:10.5px;color:var(--muted);line-height:1.5}
 
 /* ---------- cards ---------- */
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:26px 28px;margin-bottom:22px}
-.card h2{font-family:var(--disp);font-size:21px;color:var(--navy);margin-bottom:4px;display:flex;align-items:center;gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 28px;margin-bottom:22px;
+  box-shadow:0 1px 2px rgba(18,49,79,.04),0 8px 22px rgba(18,49,79,.05)}
+.card h2{font-family:var(--disp);font-weight:700;font-size:21px;color:var(--navy);margin-bottom:4px;display:flex;align-items:center;gap:10px;letter-spacing:-.01em}
 .card h2 .badge{font-family:var(--mono);font-size:11px;font-weight:500;background:var(--salmon);color:var(--navy);
   padding:2px 9px;border-radius:20px;letter-spacing:.06em}
 .card .sub{color:var(--muted);font-size:13.5px;margin-bottom:18px;max-width:660px}
@@ -72,7 +78,7 @@ h1{font-family:var(--disp);font-weight:700;font-size:clamp(26px,3.4vw,38px);marg
 @media(max-width:700px){.drops{grid-template-columns:1fr}}
 .drop{border:1.5px dashed #B9C6D1;border-radius:10px;padding:22px 18px;text-align:center;cursor:pointer;transition:all .15s;background:#FBFCFD}
 .drop:hover{border-color:var(--coral)}
-.drop.filled{border-style:solid;border-color:var(--green);background:#F2F8F5}
+.drop.filled{border-style:solid;border-color:var(--teal-deep);background:var(--teal-pale)}
 .drop .ic{font-size:22px}
 .drop .dt{font-weight:600;color:var(--navy);margin-top:6px;font-size:14px}
 .drop .dd{font-size:12px;color:var(--muted);margin-top:3px}
@@ -80,7 +86,8 @@ h1{font-family:var(--disp);font-weight:700;font-size:clamp(26px,3.4vw,38px);marg
 .drop input{display:none}
 
 /* buttons */
-.btn{font-family:var(--body);font-weight:600;font-size:14.5px;border:none;border-radius:8px;padding:12px 26px;cursor:pointer;transition:all .15s}
+.btn{font-family:var(--body);font-weight:600;font-size:14.5px;border:none;border-radius:9px;padding:12px 26px;cursor:pointer;transition:all .15s}
+.btn-primary{box-shadow:0 2px 8px rgba(244,138,145,.34)}
 .btn-primary{background:var(--coral);color:#fff}
 .btn-primary:hover{background:var(--coral-dark)}
 .btn-primary:disabled{background:#C8D2DA;cursor:not-allowed}
@@ -93,10 +100,11 @@ h1{font-family:var(--disp);font-weight:700;font-size:clamp(26px,3.4vw,38px);marg
 .chips{display:flex;flex-wrap:wrap;gap:9px;margin:14px 0 4px}
 .chip{font-family:var(--mono);font-size:12px;background:#EEF2F5;border:1px solid var(--line);border-radius:20px;padding:5px 13px;color:var(--ink)}
 .chip b{color:var(--navy)}
-.chip.warn{background:#FBF3E2;border-color:#E7D5AC;color:var(--amber)}
-.chip.good{background:#F0F7F3;border-color:#CBE3D6;color:var(--green)}
-.chip.note{background:#FFF6F6;border-color:var(--salmon-deep);color:var(--navy)}
-td.adminnote{font-size:12px;color:var(--amber);font-style:italic;background:#FFFBF2;border-bottom:1px solid #EDF1F4;padding:6px 10px 8px}
+.chip.warn{background:var(--salmon);border-color:var(--salmon-deep);color:var(--coral-dark)}
+.chip.good{background:var(--teal-pale);border-color:var(--teal-line);color:#2F7F72}
+.chip.note{background:var(--salmon);border-color:var(--salmon-deep);color:var(--navy)}
+.chip{border-radius:999px}
+td.adminnote{font-size:12px;color:var(--muted);font-style:italic;background:var(--teal-pale);border-bottom:1px solid #EDF1F4;padding:6px 10px 8px}
 
 /* settings grid */
 .set-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-top:6px}
@@ -107,18 +115,44 @@ td.adminnote{font-size:12px;color:var(--amber);font-style:italic;background:#FFF
 
 /* tables of questions */
 table.q{width:100%;border-collapse:collapse;margin-top:10px;font-size:13.5px}
-table.q th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);text-align:left;
-  padding:8px 10px;border-bottom:1.5px solid var(--line);font-weight:600}
+table.q th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:#fff;text-align:left;
+  padding:11px 10px;background:var(--navy);font-weight:600;border:none}
+table.q th:first-child{border-radius:8px 0 0 8px}
+table.q th:last-child{border-radius:0 8px 8px 0}
 table.q td{padding:9px 10px;border-bottom:1px solid #EDF1F4;vertical-align:middle}
 table.q tr:last-child td{border-bottom:none}
 table.q .mono{font-family:var(--mono);font-size:12.5px}
 table.q select,table.q input[type=text],table.q input[type=number]{font-family:var(--mono);font-size:12.5px;padding:6px 8px;border:1.5px solid var(--line);border-radius:6px;background:#fff;max-width:100%}
 table.q select:focus,table.q input:focus{outline:none;border-color:var(--coral)}
-.salrow{background:#FFF6F6}
-.callout{background:#FFF6F6;border:1px solid var(--salmon-deep);border-left:4px solid var(--coral);border-radius:8px;
+.salrow{background:var(--salmon)}
+.callout{background:var(--salmon);border:1px solid var(--salmon-deep);border-left:4px solid var(--coral);border-radius:8px;
   padding:12px 16px;margin:0 0 18px;font-size:13px;color:var(--ink);line-height:1.6}
 .callout b{color:var(--navy)}
+.callout a{color:var(--coral-dark);text-decoration:underline;text-underline-offset:2px;font-size:12px}
 .noteslist li{margin-bottom:7px;line-height:1.7}
+/* ask panel */
+#ask-q{width:100%;font-family:var(--body);font-size:14px;padding:11px 13px;border:1.5px solid var(--line);
+  border-radius:9px;resize:vertical;background:#fff;color:var(--ink)}
+#ask-q:focus{outline:none;border-color:var(--teal-deep)}
+.ask-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:11px}
+.pwlab{margin-left:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:7px}
+.pwlab input{font-family:var(--mono);font-size:12.5px;padding:7px 9px;border:1.5px solid var(--line);border-radius:7px;width:150px}
+#ask-out,#ask-preview{margin-top:14px;padding:14px 16px;border-radius:9px;white-space:pre-wrap;
+  font-size:13.2px;line-height:1.62;max-height:420px;overflow:auto}
+#ask-out{background:var(--teal-pale);border:1px solid var(--teal-line);color:var(--ink);font-family:var(--body)}
+#ask-preview{background:var(--navy-deep);border:1px solid var(--navy);color:#B9D4E6;font-family:var(--mono);font-size:11.5px;max-height:300px}
+/* Approved / Skip segmented toggle */
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:#fff}
+.sg{font-family:var(--body);font-size:11px;font-weight:600;letter-spacing:.02em;padding:5px 12px;border:none;
+  background:#fff;color:var(--muted);cursor:pointer;transition:all .12s;white-space:nowrap}
+.sg:hover{background:#F3F6F9}
+.sg.ok.on{background:var(--teal);color:var(--navy-deep)}
+.sg.no.on{background:#E9EEF3;color:var(--navy)}
+tr.salrow.skipped .inp-miles,tr.salrow.skipped .inp-amt,tr.salrow.skipped .amtwrap{opacity:.45}
+tr.salrow.skipped td.mono,tr.salrow.skipped td:nth-child(3){color:var(--muted)}
+.amtwrap{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+td.submitted{color:var(--muted);font-size:12px;white-space:nowrap}
+.adj{margin-left:6px}
 /* per-client invoice blocks (step 4) */
 .cl{border:1px solid var(--line);border-radius:10px;margin-bottom:16px;overflow:hidden}
 .cl.off{background:#FAFBFC}
@@ -137,12 +171,12 @@ table.q select:focus,table.q input:focus{outline:none;border-color:var(--coral)}
 .cl-add{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:11px 16px 2px;font-size:12.5px;color:var(--muted);border-top:1px dashed var(--line);margin-top:8px}
 .cl-add input[type=text]{flex:1;min-width:200px}
 .cl-add input{font-family:var(--mono);font-size:12.5px;padding:6px 8px;border:1.5px solid var(--line);border-radius:6px;background:#fff}
-.cl-note{padding:9px 16px 0;font-size:12.3px;color:var(--amber);font-style:italic}
-.pill{display:inline-block;white-space:nowrap;font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:12px;letter-spacing:.04em;vertical-align:middle}
+.cl-note{padding:9px 16px 0;font-size:12.3px;color:var(--muted);font-style:italic}
+.pill{display:inline-block;white-space:nowrap;font-family:var(--body);font-weight:500;font-size:11px;padding:3px 11px;border-radius:999px;letter-spacing:.01em;vertical-align:middle;border:1px solid transparent}
 #tbl-canc td:nth-child(2){min-width:210px}
-.pill.skip{background:#EEF2F5;color:var(--muted)}
-.pill.multi{background:var(--salmon);color:var(--navy)}
-.pill.less{background:#FBE9E5;color:var(--red)}
+.pill.skip{background:#EDF1F5;color:var(--muted);border-color:#DFE6EC}
+.pill.multi{background:var(--teal-pale);color:#2F7F72;border-color:var(--teal-line)}
+.pill.less{background:var(--salmon);color:var(--coral-dark);border-color:var(--salmon-deep)}
 .excl{margin-top:14px;border-top:1px dashed var(--line);padding-top:12px}
 .excl summary{cursor:pointer;font-size:12.5px;color:var(--muted);font-weight:600}
 .excl ul{margin:8px 0 0 18px;font-size:12.5px;color:var(--muted)}
@@ -153,7 +187,7 @@ table.q select:focus,table.q input:focus{outline:none;border-color:var(--coral)}
 .dl-zone .big{font-family:var(--disp);font-size:26px;color:var(--navy)}
 .dl-zone .tot{font-family:var(--mono);font-size:34px;font-weight:600;color:var(--coral);margin:8px 0 2px}
 .dl-zone .fn{font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:18px}
-.err{background:#FBE9E5;border:1px solid #EFC4BB;color:var(--red);border-radius:8px;padding:12px 16px;font-size:13.5px;margin-top:14px;display:none}
+.err{background:var(--salmon);border:1px solid var(--salmon-deep);color:var(--red);border-radius:8px;padding:12px 16px;font-size:13.5px;margin-top:14px;display:none}
 footer{padding:26px 0 40px;color:var(--muted);font-size:12px;text-align:center}
 footer b{color:var(--navy)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
@@ -164,13 +198,13 @@ footer b{color:var(--navy)}
 
 <header>
   <div class="wrap">
-    <div class="hd-eyebrow">Sitterwise, Inc. · Corporate — Invoiced</div>
-    <h1>Care.com Invoice Builder</h1>
-    <p class="hd-sub">Drop the two monthly exports, answer the judgment calls, and download the finished invoice — official template, live formulas, salmon columns and all.</p>
+    <div class="hd-eyebrow">Sitterwise, Inc. · Monthly invoicing</div>
+    <h1>Sitterwise Invoice Builder</h1>
+    <p class="hd-sub">Every invoiced client, one pass. Drop this month's exports, answer the judgment calls, and take away the Care.com invoice and a Xero import for everyone else.</p>
     <div class="steps" id="steps">
       <div class="step active" data-step="1"><span class="n">1</span> Upload exports</div>
       <div class="step" data-step="2"><span class="n">2</span> Answer questions</div>
-      <div class="step" data-step="3"><span class="n">3</span> Download invoice</div>
+      <div class="step" data-step="3"><span class="n">3</span> Care.com invoice</div>
       <div class="step" data-step="4"><span class="n">4</span> Everyone else</div>
     </div>
   </div>
@@ -182,16 +216,11 @@ footer b{color:var(--navy)}
 
   <!-- STEP 1 -->
   <section class="card" id="card-upload">
-    <h2>The two exports <span class="badge">step 1</span></h2>
-    <p class="sub">Same two files as every month. The Care.com export is the billing source of truth (jobs, bonuses, cancellations); the bookings export supplies client names and mileage.</p>
+    <h2>This month's exports <span class="badge">step 1</span></h2>
+    <p class="sub">Four files. The Care.com export is the billing source of truth (jobs, bonuses, cancellations); bookings supplies client names; the mileage form gives exact billable miles; the Xero export drives everything that isn't Care.com.</p>
     <div class="callout">
-      <b>Pull the Care.com export with <u>both</u> cancelled and active/completed jobs.</b>
-      Don't filter it to one status. The cancelled rows are what give each cancellation
-      Care.com's own job ID and a cancellation timestamp — that timestamp is what sets
-      the &gt;24 hr / &lt;24 hr fee automatically instead of you guessing, and it proves
-      which cancellations were reassigned and already billed as worked. A completed-only
-      export still builds, but every cancellation falls back to the bookings file with a
-      Sitterwise booking number and no notice time.
+      <b>Pull the Care.com export with <u>both</u> cancelled and active/completed jobs</b> — don't filter it to one status.
+      <a href="https://github.com/amycothrangray/care-invoice-builder#pulling-the-exports" target="_blank" rel="noopener">Why</a>
     </div>
     <div class="drops">
       <label class="drop" id="drop-care">
@@ -210,15 +239,15 @@ footer b{color:var(--navy)}
       </label>
       <label class="drop" id="drop-xero" style="grid-column:1 / -1">
         <div class="ic">📗</div>
-        <div class="dt">Xero sales invoices <span style="font-weight:400;color:var(--muted)">(for everything that isn't Care.com)</span></div>
-        <div class="dd">Xero → Business → Invoices → Export. Twelve months is ideal. The app reads your own invoice history to learn each client's billing contact, rate, payment terms and line wording, and to see what you've already invoiced — no rate card to maintain. Without it, only the Care.com invoice gets built.</div>
+        <div class="dt">Xero sales invoices</div>
+        <div class="dd">Xero → Business → Invoices → Export. Twelve months is ideal. The app reads your own invoice history to learn each client's billing contact, rate, payment terms and line wording, and to see what you've already invoiced — no rate card to maintain.</div>
         <div class="fname" id="fname-xero"></div>
         <input type="file" id="file-xero" accept=".csv">
       </label>
       <label class="drop" id="drop-mil" style="grid-column:1 / -1">
         <div class="ic">🚗</div>
-        <div class="dt">Mileage requests <span style="font-weight:400;color:var(--muted)">(optional, recommended)</span></div>
-        <div class="dd">Export of the caregiver Mileage Request form (Cognito) — the source of truth for billable miles. Without it, mileage is estimated from reimbursements.</div>
+        <div class="dt">Mileage requests</div>
+        <div class="dd">Export of the caregiver Mileage Request form (Cognito) — the source of truth for billable miles and the amounts Saudia approves.</div>
         <div class="fname" id="fname-mil"></div>
         <input type="file" id="file-mil" accept=".xlsx,.xls,.csv">
       </label>
@@ -254,7 +283,7 @@ footer b{color:var(--navy)}
 
     <div id="q-mileage" style="display:none">
       <h3 style="font-size:14px;color:var(--navy);margin:22px 0 2px">Mileage</h3>
-      <p class="sub" style="margin-bottom:4px">Caregiver mileage submissions matched to this invoice. Jobs with a bonus are unticked by default — Care.com won't pay both unless pre-approved.</p>
+      <p class="sub" style="margin-bottom:4px">Caregiver mileage submissions matched to this invoice. <b>Submitted</b> is what the caregiver claimed; miles and amount are two views of the same figure, so edit whichever Saudia approves — up to 10 miles can be added at checkout, and anything beyond that is flagged. Jobs with a bonus, or filed by someone other than the caregiver on the job, default to Skip.</p>
       <table class="q" id="tbl-mileage"></table>
       <details class="excl" id="mil-skipped" style="display:none"><summary>Mileage submissions NOT on this invoice (and why)</summary><ul id="mil-skipped-list"></ul></details>
     </div>
@@ -283,7 +312,7 @@ footer b{color:var(--navy)}
 
   <!-- STEP 3 -->
   <section class="card locked" id="card-download">
-    <h2>Your invoice <span class="badge">step 3</span></h2>
+    <h2>The Care.com invoice <span class="badge">step 3</span></h2>
     <div class="dl-zone" id="dl-zone" style="display:none">
       <div class="big">Ready to send.</div>
       <div class="tot" id="dl-total"></div>
@@ -291,6 +320,27 @@ footer b{color:var(--navy)}
       <button class="btn btn-primary" id="btn-download">Download the .xlsx</button>
       <p class="hint" style="margin-top:14px">Official template layout · live formulas · full formatting. Review it, then send it to Care.com yourself.</p>
     </div>
+  </section>
+
+  <!-- ASK -->
+  <section class="card locked" id="ask-card">
+    <h2>Ask about this month <span class="badge">redacted</span></h2>
+    <p class="sub">Questions across all three exports at once — "why is 5591219 cancelled with a different caregiver on it?", "which mileage claims were filed by someone who didn't work the job?", "what changed since last month?"</p>
+    <div class="callout" style="border-left-color:var(--teal);background:var(--teal-pale);border-color:var(--teal-line)">
+      <b>Names never leave your computer.</b> Every client and caregiver is swapped for a token
+      (<span class="mono">client#3</span>, <span class="mono">cg#7</span>) before the question is sent, and swapped back
+      here when the answer comes in. Emails, phone numbers and street addresses are dropped entirely.
+      What does get sent: job numbers, dates, hours, statuses and amounts — press
+      <b>Show exactly what gets sent</b> to read the payload before you send it.
+    </div>
+    <textarea id="ask-q" rows="2" placeholder="e.g. Job 5591219 shows cancelled but a different caregiver worked it — what happened, and is the mileage right?"></textarea>
+    <div class="ask-row">
+      <button class="btn btn-primary" id="ask-go">Ask</button>
+      <button class="btn btn-ghost" id="ask-preview-btn" type="button">Show exactly what gets sent</button>
+      <label class="pwlab">Password <input type="password" id="ask-pw" placeholder="site password" autocomplete="off"></label>
+    </div>
+    <pre id="ask-preview" style="display:none"></pre>
+    <pre id="ask-out" style="display:none"></pre>
   </section>
 
   <!-- STEP 4 -->
@@ -331,7 +381,7 @@ footer b{color:var(--navy)}
 </div>
 </div>
 
-<footer><b>Sitterwise · Care.com Invoice Builder</b> · runs entirely in your browser · nothing is uploaded anywhere</footer>
+<footer><b>Sitterwise Invoice Builder</b> · runs entirely in your browser · nothing is uploaded anywhere</footer>
 
 <script src="app.js"></script>
 </body>

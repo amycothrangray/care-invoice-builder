@@ -1,7 +1,8 @@
-# Sitterwise · Care.com Invoice Builder
+# Sitterwise Invoice Builder
 
-Drop the monthly exports, answer the judgment calls, download the finished
-invoice — official template layout, live formulas, full formatting.
+Every invoiced client in one pass. Drop the monthly exports, answer the judgment
+calls, and take away two things: the Care.com invoice in their official template
+(live formulas, full formatting) and a Xero import CSV for everyone else.
 
 Everything runs in the browser. The spreadsheets never leave your computer.
 

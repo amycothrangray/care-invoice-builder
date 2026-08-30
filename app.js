@@ -1,5 +1,5 @@
-/* Sitterwise → Care.com Invoice Builder
-   All logic runs client-side. Rules mirror the monthly workflow:
+/* Sitterwise Invoice Builder — the Care.com invoice, then every other
+   invoiced client. All logic runs client-side. Rules mirror the monthly workflow:
    $42/hr (editable) · CA daily OT 1.5× over 8h/day · 4-hr minimum ·
    mileage over 40mi RT at $0.76/mi (editable) · cancellation reconciliation
    with reassignment-shadow + couldn't-fill exclusion and multi-day grouping.
@@ -414,8 +414,15 @@ function analyze(careWB, bookWB, milWB, xeroTxt) {
       }
       if (seenJid.has(j.jid)) continue; // duplicate submission for the same job
       seenJid.add(j.jid);
-      mileageCand.push({ jid: j.jid, cg: j.cg, client: j.client, date: j.date, reimb: e.amt, miles: e.over,
-        include: !(j.bonus > 0), conflict: j.bonus > 0, src: "form"+how, note: "" });
+      // Who filed the claim isn't always who worked the job. A caregiver cancelled off
+      // a job can still file mileage against its number — and then file again against
+      // the job she did work, so the same drive arrives twice under two job numbers.
+      const sameCg = e.name && j.cg && firstName(e.name)===firstName(j.cg) && lastName(e.name)===lastName(j.cg);
+      const mismatch = !!(e.name && !sameCg);
+      mileageCand.push({ jid: j.jid, cg: j.cg, submitter: e.name || "", mismatch,
+        client: j.client, date: j.date, reimb: e.amt, miles: e.over, subMiles: e.over, subAmt: e.amt,
+        include: !(j.bonus > 0) && !mismatch, conflict: j.bonus > 0, src: "form"+how,
+        note: mismatch ? `Filed by ${e.name}, but the Care.com export has ${j.cg} on job ${j.jid}. Confirm who actually drove before billing this.` : "" });
     }
   } else {
     // The bookings export now carries mileage approval itself. Use it when it is
@@ -431,7 +438,8 @@ function analyze(careWB, bookWB, milWB, xeroTxt) {
         const miles = Math.round(r.payMiles || r.apprMiles || Math.max(r.rtMiles-40, 0));
         if (!j) { mileageOffInvoice.push(r); continue; }
         mileageCand.push({ jid: j.jid, cg: j.cg, client: r.client||j.client, date: r.date,
-          reimb: r.milAmt || r.reimb, miles, include: !(j.bonus > 0), conflict: j.bonus > 0,
+          reimb: r.milAmt || r.reimb, miles, subMiles: miles, subAmt: r.milAmt || r.reimb,
+          include: !(j.bonus > 0), conflict: j.bonus > 0,
           src: "approved in the bookings export", note: r.note || "" });
       }
     } else {
@@ -444,8 +452,9 @@ function analyze(careWB, bookWB, milWB, xeroTxt) {
         const match = jobFor(r);
         const desc = r.reimbDesc ? `reimbursement “${r.reimbDesc}” ($${r.reimb.toFixed(2)})` : `$${r.reimb.toFixed(2)} reimbursement`;
         const mixed = /\+|\/|extra|additional|kid|child/i.test(r.reimbDesc) && /mile/i.test(r.reimbDesc);
+        const est = Math.round(r.reimb/0.76);
         if (match) mileageCand.push({ jid: match.jid, cg: match.cg, client: r.client, date: r.date, reimb: r.reimb,
-          miles: Math.round(r.reimb/0.76), include: !(match.bonus > 0), conflict: match.bonus > 0,
+          miles: est, subMiles: est, subAmt: r.reimb, include: !(match.bonus > 0), conflict: match.bonus > 0,
           src: "estimated from reimbursement — upload the mileage form export for exact figures",
           mixed, note: [mixed ? `⚠ ${desc} covers more than mileage — enter only the mileage portion` : desc, r.note].filter(Boolean).join(" · ") });
         else mileageOffInvoice.push(r);
@@ -568,6 +577,7 @@ function analyze(careWB, bookWB, milWB, xeroTxt) {
 
   renderQuestions({tips, mileageOffInvoice});
   renderClients();
+  askInit();
 }
 
 /* ---------------- questions UI ---------------- */
@@ -599,6 +609,7 @@ function renderQuestions(extra) {
     S.milSource==="form" ? `<span class="chip good">🚗 mileage form: ${S.mileageCand.length} matched, ${S.milSkipped.length} skipped — miles read from “${esc(S.milCol)}”</span>` : `<span class="chip warn">no mileage form uploaded \u2014 mileage below is estimated from reimbursements</span>`,
     (S.milSource==="form" && S.milBlank) ? `<span class="chip warn">⚠ ${S.milBlank} mileage submission(s) had no billable miles in “${esc(S.milCol)}” — they will bill $0 unless you type the miles in below</span>` : "",
     S.mileageCand.some(m=>m.include && !m.miles) ? `<span class="chip warn">⚠ ${S.mileageCand.filter(m=>m.include && !m.miles).length} mileage row(s) are ticked but set to 0 miles — they add nothing to the invoice</span>` : "",
+    S.mileageCand.some(m=>m.mismatch) ? `<span class="chip warn">⚠ ${S.mileageCand.filter(m=>m.mismatch).length} mileage claim(s) filed by someone other than the caregiver on the job — unticked, confirm who drove</span>` : "",
     S.dblBill.length ? `<span class="chip warn">⚠ ${S.dblBill.length} possible double-bill(s): a billed cancellation's caregiver also has a completed job that day — see below</span>` : "",
     S.adminNotes.length ? `<span class="chip note">📝 ${S.adminNotes.length} admin note(s) in the bookings file — shown next to the calls below</span>` : "",
     S.careHasStatus
@@ -630,16 +641,26 @@ function renderQuestions(extra) {
   // mileage
   if (S.mileageCand.length || S.milSkipped.length) {
     $("q-mileage").style.display = "block";
-    $("tbl-mileage").innerHTML = `<tr><th>Include</th><th>Job</th><th>Caregiver</th><th>Date</th><th>Miles over 40 RT</th><th>Status</th></tr>` +
+    // Saudia approves a DOLLAR AMOUNT, not a mileage count, so the amount is a
+    // first-class editable field alongside the miles the invoice actually bills.
+    $("tbl-mileage").innerHTML = `<tr><th>Approve</th><th>Job</th><th>Caregiver</th><th>Date</th><th>Submitted</th><th>Miles over 40 RT</th><th>Amount to bill</th><th>Status</th></tr>` +
       S.mileageCand.map((m,i)=>{
-        const st = m.conflict
+        const st = m.mismatch
+          ? `<span class="pill less" title="The mileage form was filed by ${esc(m.submitter)}, but the Care.com export shows ${esc(m.cg)} worked job ${esc(m.jid)}. Unticked until you confirm who drove.">\u26a0 filed by ${esc(m.submitter)}, not ${esc(m.cg)}</span>`
+          : m.conflict
           ? `<span class="pill less" title="Care.com does not pay mileage AND a bonus on the same job unless both are pre-approved.">\u26a0 $50 bonus on this job \u2014 pick one</span>`
           : (S.milSource==="form" ? `<span class="pill multi">\u2713 form submission</span>` : `<span class="pill skip">estimate \u2014 verify</span>`);
-        return `<tr class="salrow">
-        <td><input type="checkbox" data-midx="${i}" class="inp-minc"${m.include?" checked":""}></td>
+        const sub = m.subMiles ? `${+(+m.subMiles).toFixed(2)} mi · ${money(m.subAmt||0)}` : "\u2014";
+        return `<tr class="salrow" data-mrow="${i}">
+        <td><span class="seg" role="group">
+             <button type="button" class="sg ok${m.include?" on":""}" data-app="${i}" data-v="1">Approved</button>
+             <button type="button" class="sg no${m.include?"":" on"}" data-app="${i}" data-v="0">Skip</button>
+           </span></td>
         <td class="mono">${m.jid}</td><td>${m.cg}</td><td class="mono">${m.date.slice(5)}</td>
-        <td><input type="number" data-midx="${i}" class="inp-miles" value="${m.miles}" min="0" style="width:80px"></td>
-        <td>${st}</td></tr>${m.note?`<tr class="salrow"><td></td><td colspan="5" class="adminnote">📝 ${esc(m.note)}</td></tr>`:""}`;
+        <td class="mono submitted">${sub}</td>
+        <td><input type="number" data-miles="${i}" class="inp-miles" value="${+(+m.miles).toFixed(2)}" min="0" step="0.01" style="width:84px"></td>
+        <td><span class="amtwrap">$<input type="number" data-amt="${i}" class="inp-amt" value="${(m.miles*0.76).toFixed(2)}" min="0" step="0.01" style="width:88px"></span></td>
+        <td>${st} <span class="adj" data-adj="${i}"></span></td></tr>${m.note?`<tr class="salrow"><td></td><td colspan="7" class="adminnote">📝 ${esc(m.note)}</td></tr>`:""}`;
       }).join("");
     if (S.milSkipped.length) {
       $("mil-skipped").style.display = "block";
@@ -707,6 +728,42 @@ function renderQuestions(extra) {
   } else $("q-exclude").style.display = "none";
 
   $("q-actions").style.display = "flex";
+  // Approved / Skip owns `include`; the two number fields are two views of the
+  // same figure (the invoice bills miles in column N, O = N x rate), so editing
+  // either keeps the other honest.
+  document.querySelectorAll(".sg[data-app]").forEach(b=>b.addEventListener("click", ()=>{
+    const i = +b.dataset.app, on = b.dataset.v === "1";
+    S.mileageCand[i].include = on;
+    document.querySelectorAll(`.sg[data-app="${i}"]`).forEach(x=>x.classList.toggle("on", (x.dataset.v==="1")===on));
+    const row = document.querySelector(`[data-mrow="${i}"]`); if (row) row.classList.toggle("skipped", !on);
+    updateTape();
+  }));
+  const mrate = () => parseFloat($("set-mile").value) || 0.76;
+  const syncAdj = i => {
+    const m = S.mileageCand[i], el = document.querySelector(`[data-adj="${i}"]`);
+    if (!el) return;
+    const d = Math.round((m.miles - (m.subMiles||0))*100)/100;
+    // a caregiver can add up to 10 miles at checkout via reimbursements
+    el.innerHTML = !d ? "" :
+      `<span class="pill ${(d>10||d<0)?"less":"multi"}">${d>0?"+":""}${d} mi vs submitted${d>10?" — over the 10-mile limit":""}</span>`;
+  };
+  document.querySelectorAll(".inp-miles").forEach(inp=>inp.addEventListener("input", ()=>{
+    const i = +inp.dataset.miles, v = Math.max(0, parseFloat(inp.value)||0);
+    S.mileageCand[i].miles = v;
+    const a = document.querySelector(`[data-amt="${i}"]`); if (a) a.value = (v*mrate()).toFixed(2);
+    syncAdj(i); updateTape();
+  }));
+  document.querySelectorAll(".inp-amt").forEach(inp=>inp.addEventListener("input", ()=>{
+    const i = +inp.dataset.amt, amt = Math.max(0, parseFloat(inp.value)||0);
+    const v = Math.round((amt/mrate())*100)/100;
+    S.mileageCand[i].miles = v;
+    const mi = document.querySelector(`[data-miles="${i}"]`); if (mi) mi.value = v;
+    syncAdj(i); updateTape();
+  }));
+  $("set-mile").addEventListener("input", ()=>{
+    S.mileageCand.forEach((m,i)=>{ const a=document.querySelector(`[data-amt="${i}"]`); if (a) a.value=(m.miles*mrate()).toFixed(2); });
+  });
+  S.mileageCand.forEach((m,i)=>{ syncAdj(i); const r=document.querySelector(`[data-mrow="${i}"]`); if (r) r.classList.toggle("skipped", !m.include); });
   document.querySelectorAll("#card-questions input, #card-questions select").forEach(el=>el.addEventListener("input", updateTape));
   updateTape();
   $("card-questions").scrollIntoView({behavior:"smooth", block:"start"});
@@ -720,8 +777,7 @@ function collectAnswers() {
     const j = S.unmatched[+inp.dataset.uidx];
     j.client = cleanName(inp.value) || "Care.com Family";
   });
-  document.querySelectorAll(".inp-minc").forEach(cb=>{ S.mileageCand[+cb.dataset.midx].include = cb.checked; });
-  document.querySelectorAll(".inp-miles").forEach(inp=>{ S.mileageCand[+inp.dataset.midx].miles = Math.max(0, parseInt(inp.value)||0); });
+  document.querySelectorAll(".inp-miles").forEach(inp=>{ S.mileageCand[+inp.dataset.miles].miles = Math.max(0, parseFloat(inp.value)||0); });
   S.jobs.forEach(j=>j.miles=0);
   S.mileageCand.forEach(m=>{ if (m.include) { const j=S.jobs.find(x=>x.jid===m.jid); if (j) j.miles = m.miles; } });
   document.querySelectorAll(".inp-cmode").forEach(sel=>{ S.cancBillable[+sel.dataset.cidx].mode = sel.value; });
@@ -1246,6 +1302,147 @@ $("btn-xero").addEventListener("click", ()=>{
     setStep(4);
   } catch(e) { err.textContent = "Couldn't build the CSV: " + e.message; err.style.display = "block"; }
 });
+
+/* ================================================================
+   ASK — a question box over the loaded exports.
+   Names never leave the browser. Every client, caregiver and submitter is
+   swapped for an opaque token (client#3, cg#7) before the request goes out,
+   and swapped back when the answer is rendered, so the reply reads normally
+   while the API only ever sees tokens. Emails, phones and street addresses
+   are dropped outright; free-text admin notes are scrubbed as well.
+   ================================================================ */
+
+const askTok = { toTok: new Map(), toName: new Map(), n: 0 };
+function tok(kind, name) {
+  const clean = cleanName(name);
+  if (!clean) return "";
+  const key = kind + "|" + clean.toLowerCase();
+  if (!askTok.toTok.has(key)) {
+    const t = `${kind}#${++askTok.n}`;
+    askTok.toTok.set(key, t);
+    askTok.toName.set(t, clean);
+  }
+  return askTok.toTok.get(key);
+}
+/* free text can name anyone; drop contact details and swap any name we know */
+function scrub(text) {
+  let t = String(text || "")
+    .replace(/[\w.+-]+@[\w.-]+\.\w+/g, "[email]")
+    .replace(/(\+?\d[\d\-().\s]{7,}\d)/g, "[phone]")
+    .replace(/\b\d{1,6}\s+[A-Za-z0-9.'-]+(?:\s+[A-Za-z0-9.'-]+){0,4}\s+(?:St|Street|Ave|Avenue|Rd|Road|Dr|Drive|Ln|Lane|Blvd|Ct|Court|Way|Pl|Place|Ter|Circle|Cir)\b\.?/gi, "[address]");
+  for (const [key, t2] of askTok.toTok) {
+    const name = key.split("|")[1];
+    t = t.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), t2);
+  }
+  return t;
+}
+const deTok = text => String(text||"").replace(/\b(client|cg)#\d+/g, m => askTok.toName.get(m) || m);
+
+/* Build the redacted payload. Job numbers, dates, hours, statuses and money —
+   the facts a reconciliation question actually turns on. */
+function askPayload() {
+  askTok.toTok.clear(); askTok.toName.clear(); askTok.n = 0;
+  const a = collectAnswers();
+  // Mint every name FIRST. scrub() can only redact a name it already knows, so
+  // a name minted later in the object literal would survive in a note written
+  // earlier — that is how "Wellthy" once slipped through an admin note.
+  S.jobs.forEach(j => { tok("cg", j.cg); tok("client", j.client); });
+  S.cancBillable.forEach(c => { tok("cg", c.cg); tok("client", c.client); });
+  S.mileageCand.forEach(m => { tok("cg", m.cg); tok("cg", m.submitter); });
+  S.adminNotes.forEach(n => { tok("cg", n.cg); tok("client", n.client); });
+  S.lifesavers.forEach(l => { tok("cg", l.cg); tok("client", l.client); });
+  S.clientInvoices.forEach(i => {
+    tok("client", i.contact);
+    (i.canc || []).forEach(c => { tok("cg", c.cg); tok("client", c.client); });
+    (i.lines || []).forEach(l => tok("cg", l.desc));   // caregiver-style lines are a bare name
+  });
+  const p = {
+    month: `${MONTHS[S.month-1]} ${S.year}`,
+    rates: { regular: a.rate, overtime: a.otRate, mileagePerMile: a.mileRate, cancellationFee: a.cancFee },
+    rules: "Care.com: 4-hour minimum; California daily overtime over 8h at 1.5x; mileage only on miles over a 40-mile round trip; cancellations $30 flat over 24h notice, else up to 8h at the hourly rate.",
+    completedJobs: S.jobs.map(j => ({
+      job: j.jid, date: j.date, start: j.start, end: j.end, hrs: +j.hrs.toFixed(2),
+      caregiver: tok("cg", j.cg), client: tok("client", j.client),
+      bonus: j.bonus || 0, state: j.state, careStatus: j.status,
+      excludedFromInvoice: S.excludeJobs.has(j.jid) || undefined,
+    })),
+    cancellations: S.cancBillable.map(c => ({
+      id: c.bk, fromCareExport: c.src === "care", date: c.date,
+      client: tok("client", c.client), caregiver: tok("cg", c.cg),
+      bookedHrs: c.hrs, noticeHours: c.notice === null ? null : +(+c.notice).toFixed(1),
+      billedAs: c.mode, partOfMultiDay: c.group ? true : undefined,
+    })),
+    excludedCancellations: S.cancExcluded.map(e => ({ why: e.why, detail: scrub(e.label) })),
+    mileage: S.mileageCand.map(m => ({
+      job: m.jid, date: m.date, caregiverOnJob: tok("cg", m.cg),
+      filedBy: m.submitter ? tok("cg", m.submitter) : undefined,
+      filedByDiffersFromCaregiver: m.mismatch || undefined,
+      submittedMiles: m.subMiles, submittedAmount: m.subAmt,
+      milesToBill: m.miles, amountToBill: +(m.miles * a.mileRate).toFixed(2),
+      approved: !!m.include, hasBonusOnJob: m.conflict || undefined,
+    })),
+    mileageNotOnThisInvoice: S.milSkipped.map(scrub),
+    adminNotes: S.adminNotes.map(n => ({ date: n.date, client: tok("client", n.client), caregiver: tok("cg", n.cg), status: n.status, note: scrub(n.note) })),
+    lifesaverBonuses: S.lifesavers.map(l => ({ date: l.date, client: tok("client", l.client), caregiver: tok("cg", l.cg), amount: l.amt })),
+    otherClientInvoices: S.clientInvoices.map(i => ({
+      xeroContact: tok("client", i.contact), invoiceNumber: i.num, rate: i.p.rate,
+      quoteBilled: i.quote, willSend: i.include, total: i.total,
+      lines: i.lines.map(l => ({ description: scrub(l.desc), qty: l.qty, rate: l.rate, alreadyInvoiced: l.already || undefined })),
+    })),
+    totals: computeTotals(a),
+  };
+  return p;
+}
+
+function askInit() {
+  const box = $("ask-card"); if (!box) return;
+  box.classList.remove("locked");
+  const pw = $("ask-pw");
+  try { pw.value = localStorage.getItem("sw-ask-pw") || ""; } catch {}
+  $("ask-preview-btn").addEventListener("click", () => {
+    const el = $("ask-preview");
+    if (el.style.display === "block") { el.style.display = "none"; $("ask-preview-btn").textContent = "Show exactly what gets sent"; return; }
+    el.textContent = JSON.stringify(askPayload(), null, 1);
+    el.style.display = "block";
+    $("ask-preview-btn").textContent = "Hide what gets sent";
+  });
+  $("ask-go").addEventListener("click", askSend);
+  $("ask-q").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) askSend(); });
+}
+
+async function askSend() {
+  const q = $("ask-q").value.trim(); if (!q) return;
+  const out = $("ask-out"), btn = $("ask-go");
+  const pw = $("ask-pw").value.trim();
+  try { localStorage.setItem("sw-ask-pw", pw); } catch {}
+  out.style.display = "block"; out.textContent = "Thinking…"; btn.disabled = true;
+  try {
+    const res = await fetch("/.netlify/functions/ask", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ask-password": pw },
+      body: JSON.stringify({ question: q, data: askPayload() }),
+    });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch {}
+      throw new Error(msg);
+    }
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    out.textContent = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      out.textContent = deTok(buf);              // names restored for reading only
+      out.scrollTop = out.scrollHeight;
+    }
+    if (!buf.trim()) out.textContent = "No answer came back — try rephrasing.";
+  } catch (e) {
+    out.textContent = "Couldn't ask: " + e.message +
+      "\n\nThis panel needs ANTHROPIC_API_KEY and ASK_PASSWORD set on the Netlify site, and only works on the deployed site — not from a file:// page.";
+  } finally { btn.disabled = false; }
+}
 
 /* ---------------- stepper ---------------- */
 function setStep(n) {

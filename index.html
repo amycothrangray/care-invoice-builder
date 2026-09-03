@@ -269,7 +269,7 @@ footer b{color:var(--navy)}
       <h3 style="font-size:14px;color:var(--navy);margin:18px 0 8px">Rates &amp; invoice details</h3>
       <div class="set-grid">
         <div class="field"><label>Invoice #</label><input id="set-invnum" type="text"></div>
-        <div class="field"><label>Hourly rate</label><input id="set-rate" type="number" step="0.01" value="42.00"><div class="note">OT bills at 1.5×</div></div>
+        <div class="field"><label>Hourly rate</label><input id="set-rate" type="number" step="0.01" value="42.00"><div class="note">OT 1.5× over 8 hrs/day · 2× over 12</div></div>
         <div class="field"><label>Mileage rate / mi</label><input id="set-mile" type="number" step="0.001" value="0.76"><div class="note">Over 40-mi round trip</div></div>
         <div class="field"><label>Cancellation flat fee</label><input id="set-cancfee" type="number" step="0.01" value="30.00"><div class="note">For &gt;24 hr notice</div></div>
       </div>
@@ -368,7 +368,8 @@ footer b{color:var(--navy)}
     </div>
     <div class="tape-body">
       <div class="trow subtle" id="tr-reg"><span class="lbl">Regular hrs</span><span class="amt">—</span></div>
-      <div class="trow subtle" id="tr-ot"><span class="lbl">CA overtime</span><span class="amt">—</span></div>
+      <div class="trow subtle" id="tr-ot"><span class="lbl">CA overtime 1.5×</span><span class="amt">—</span></div>
+      <div class="trow subtle" id="tr-dt"><span class="lbl">CA double time 2×</span><span class="amt">—</span></div>
       <div class="trow subtle" id="tr-bonus"><span class="lbl">Bonuses</span><span class="amt">—</span></div>
       <div class="trow subtle" id="tr-miles"><span class="lbl">Mileage</span><span class="amt">—</span></div>
       <div class="trow subtle" id="tr-canc"><span class="lbl">Cancellations</span><span class="amt">—</span></div>

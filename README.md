@@ -40,7 +40,8 @@ The bookings export needs no special handling: pull the whole month.
 1. **Upload** the Care.com export (`CareAtWorkBackupCareJobs…xlsx`, cancelled +
    active/completed) and the bookings export (`bookings-Month-Year.xlsx`)
 2. **Answer the questions** — the app applies every rule automatically
-   (CA daily overtime, 4-hour minimum, weekly-OT check, reassignment-shadow
+   (CA daily overtime incl. double time past 12 hrs, 4-hour minimum, weekly-OT
+   check, reassignment-shadow
    and couldn't-fill exclusion, multi-day cancellation grouping) and only
    asks about the true judgment calls:
    - rate / mileage rate / invoice number (pre-filled, editable)
@@ -70,7 +71,9 @@ internal guidance only — they are never printed on the invoice.
 
 ## Rules baked in
 
-- $42/hr regular · 1.5× CA overtime over 8 hrs/day (rate editable)
+- $42/hr regular · CA daily overtime: 1.5× on hours 8–12, 2× on anything past
+  12 in a day (rate editable). A 14-hour job bills 8 + 4 + 2, not 8 + 6 — each
+  premium tier gets its own line on the invoice ("CA OT" and "CA OT 2x")
 - 4-hour minimum on short bookings
 - Mileage over 40-mile round trip at $0.76/mi (rate editable)
 - Cancellations: $30 flat for >24 hr notice; booked hours (capped at 8) at the

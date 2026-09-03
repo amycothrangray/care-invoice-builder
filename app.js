@@ -1,6 +1,6 @@
 /* Sitterwise Invoice Builder — the Care.com invoice, then every other
    invoiced client. All logic runs client-side. Rules mirror the monthly workflow:
-   $42/hr (editable) · CA daily OT 1.5× over 8h/day · 4-hr minimum ·
+   $42/hr (editable) · CA daily OT 1.5× over 8h/day, 2× over 12h/day · 4-hr minimum ·
    mileage over 40mi RT at $0.76/mi (editable) · cancellation reconciliation
    with reassignment-shadow + couldn't-fill exclusion and multi-day grouping.
 
@@ -167,6 +167,18 @@ function parseCareTimes(s) {
 const addMin = (t, mins) => { const [h,m]=t.split(":").map(Number); const x=(h*60+m+mins)%1440; return String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0"); };
 const fmt12 = t => { let [h,m]=t.split(":").map(Number); const ap=h<12?"AM":"PM"; h=h%12||12; return h+":"+String(m).padStart(2,"0")+" "+ap; };
 const timeFrac = t => { const [h,m]=t.split(":").map(Number); return (h*60+m)/1440; };
+/* California daily overtime, in one place so the tape, the chips and the
+   workbook can never disagree: the first 8 hrs of a day are straight time,
+   hours 8-12 are 1.5x, and everything past 12 is double time. A 14-hr job is
+   8 + 4 + 2, not 8 + 6 - billing the whole premium block at 1.5x quietly
+   under-bills the tail of every long day. */
+const OT_AFTER = 8, DT_AFTER = 12;
+const splitHours = h => ({
+  reg: Math.min(h, OT_AFTER),
+  ot:  Math.min(Math.max(h - OT_AFTER, 0), DT_AFTER - OT_AFTER),
+  dt:  Math.max(h - DT_AFTER, 0),
+});
+
 function isoWeek(dstr){ const d=new Date(dstr+"T12:00:00"); const t=new Date(d); t.setDate(d.getDate()+3-((d.getDay()+6)%7)); const w1=new Date(t.getFullYear(),0,4); return t.getFullYear()+"-W"+(1+Math.round(((t-w1)/86400000-3+((w1.getDay()+6)%7))/7)); }
 
 /* ---------------- analysis ---------------- */
@@ -588,7 +600,8 @@ function renderQuestions(extra) {
   $("tape-month").textContent = mn + " " + S.year;
   $("analysis-sub").textContent = `Read both files for ${mn} ${S.year}. Here's what the rules found — confirm the calls below.`;
 
-  const otJobs = S.jobs.filter(j=>j.hrs>8).length;
+  const otJobs = S.jobs.filter(j=>j.hrs>OT_AFTER).length;
+  const dtJobs = S.jobs.filter(j=>j.hrs>DT_AFTER).length;
   const minJobs = S.jobs.filter(j=>j.hrs<4).length;
   const bonusN = S.jobs.filter(j=>j.bonus>0).length;
   const lastMin = S.cancBillable.filter(c=>c.mode==="<24").length;
@@ -598,6 +611,7 @@ function renderQuestions(extra) {
   const chips = [
     `<span class="chip"><b>${S.jobs.length}</b> completed jobs</span>`,
     `<span class="chip"><b>${otJobs}</b> CA overtime splits</span>`,
+    dtJobs ? `<span class="chip"><b>${dtJobs}</b> over 12 hrs — double time on the hours past 12</span>` : "",
     minJobs ? `<span class="chip"><b>${minJobs}</b> under 4-hr minimum</span>` : "",
     `<span class="chip"><b>${bonusN}</b> bonuses</span>`,
     `<span class="chip"><b>${S.cancBillable.length}</b> billable cancellations</span>`,
@@ -784,16 +798,17 @@ function collectAnswers() {
   document.querySelectorAll(".inp-cid").forEach(inp=>{ const v=inp.value.trim(); if (v) S.cancBillable[+inp.dataset.cidx].bk = v; });
   S.excludeJobs = new Set();
   document.querySelectorAll(".inp-excl").forEach(cb=>{ if (cb.checked) S.excludeJobs.add(S.dblBill[+cb.dataset.xidx].jid); });
-  return {rate, otRate: Math.round(rate*1.5*100)/100, mileRate, cancFee, invNum: $("set-invnum").value.trim()};
+  return {rate, otRate: Math.round(rate*1.5*100)/100, dtRate: Math.round(rate*2*100)/100,
+          mileRate, cancFee, invNum: $("set-invnum").value.trim()};
 }
 
 /* ---------------- live tape ---------------- */
 function computeTotals(a) {
-  let regH=0, otH=0, bonus=0, miles=0;
+  let regH=0, otH=0, dtH=0, bonus=0, miles=0;
   for (const j of S.jobs) {
     if (S.excludeJobs.has(j.jid)) continue;
-    const h = Math.max(j.hrs, 4); // 4-hr minimum
-    regH += Math.min(h,8); otH += Math.max(h-8,0);
+    const s = splitHours(Math.max(j.hrs, 4)); // 4-hr minimum
+    regH += s.reg; otH += s.ot; dtH += s.dt;
     bonus += j.bonus; miles += j.miles;
   }
   let canc = 0;
@@ -802,8 +817,8 @@ function computeTotals(a) {
     else if (c.mode==="<24") canc += Math.min(c.hrs||8, 8) * a.rate;
   }
   const mileCost = Math.round(miles*a.mileRate*100)/100;
-  return {regH, otH, bonus, mileCost, canc,
-    total: Math.round((regH*a.rate + otH*a.otRate + bonus + mileCost + canc)*100)/100};
+  return {regH, otH, dtH, bonus, mileCost, canc,
+    total: Math.round((regH*a.rate + otH*a.otRate + dtH*a.dtRate + bonus + mileCost + canc)*100)/100};
 }
 function updateTape() {
   if (!S.jobs.length) return;
@@ -811,6 +826,7 @@ function updateTape() {
   const set=(id,val,on)=>{ const el=$(id); el.querySelector(".amt").textContent=val; el.classList.toggle("subtle",!on); };
   set("tr-reg", `${t.regH.toFixed(2)}h · ${money(t.regH*a.rate)}`, t.regH>0);
   set("tr-ot", `${t.otH.toFixed(2)}h · ${money(t.otH*a.otRate)}`, t.otH>0);
+  set("tr-dt", `${t.dtH.toFixed(2)}h · ${money(t.dtH*a.dtRate)}`, t.dtH>0);
   set("tr-bonus", money(t.bonus), t.bonus>0);
   set("tr-miles", money(t.mileCost), t.mileCost>0);
   set("tr-canc", money(t.canc), t.canc>0);
@@ -895,29 +911,39 @@ async function buildWorkbook(a) {
     let bh=j.hrs, rs=j.start, re=j.end, note="";
     if (bh<4){ re=addMin(rs,240); note=`4-hr minimum applied (booked ${bh} hrs).`; bh=4; }
     if (j.miles>0) note=(note?note+" ":"")+`Mileage ${j.miles} mi round trip over 40-mi threshold @ $${a.mileRate}.`+(j.bonus>0?" Bonus + mileage both pre-approved.":"");
-    if (bh<=8.000001) {
+    const seg = splitHours(bh);
+    const tiers = [];
+    if (seg.ot > 0.000001) tiers.push({label:"CA OT",    hrs:seg.ot, rate:a.otRate});
+    if (seg.dt > 0.000001) tiers.push({label:"CA OT 2x", hrs:seg.dt, rate:a.dtRate});
+    if (!tiers.length) {
       styleDataRow(r); setCommon(r,j); setTimes(r,rs,re);
       ws.getCell(r,12).value=a.rate; if (j.bonus) ws.getCell(r,13).value=j.bonus; if (j.miles) ws.getCell(r,14).value=j.miles;
       if (note) ws.getCell(r,17).value=note;
       setFormulas(r); r++;
     } else {
       // Care.com OT format: row 1 shows the FULL shift in the Actual columns and the
-      // first 8 hrs in the Requested columns; row 2 has no repeated identity, just
-      // "CA OT" and the overtime span in the Requested columns.
-      const regEnd=addMin(rs,480);
+      // first 8 hrs in the Requested columns. Each premium tier then gets its own
+      // row with no repeated identity — just its label and its span in the
+      // Requested columns. A day past 12 hrs has two of them: 1.5x, then 2x.
+      const regEnd=addMin(rs,Math.round(seg.reg*60));
       styleDataRow(r); setCommon(r,j);
       [[6,rs],[7,re],[9,rs],[10,regEnd]].forEach(([c,t])=>{ const cell=ws.getCell(r,c); cell.value=timeFrac(t); cell.numFmt="h:mm AM/PM"; });
       ws.getCell(r,12).value=a.rate; if (j.bonus) ws.getCell(r,13).value=j.bonus; if (j.miles) ws.getCell(r,14).value=j.miles;
       if (note) ws.getCell(r,17).value=note;
       setFormulas(r); r++;
-      styleDataRow(r); // identity columns intentionally left blank on the OT line
-      ws.getCell(r,8).value="CA OT";
-      [[9,regEnd],[10,re]].forEach(([c,t])=>{ const cell=ws.getCell(r,c); cell.value=timeFrac(t); cell.numFmt="h:mm AM/PM"; });
-      ws.getCell(r,11).value={formula:`(MOD(J${r}-I${r},1)*24)`};
-      ws.getCell(r,12).value=a.otRate; ws.getCell(r,12).numFmt=MONEYFMT;
-      ws.getCell(r,15).value={formula:`SUM(N${r}*${a.mileRate})`}; ws.getCell(r,15).numFmt=MONEYFMT;
-      ws.getCell(r,16).value={formula:`SUM(K${r}*L${r})+M${r}+O${r}`}; ws.getCell(r,16).numFmt=MONEYFMT;
-      r++;
+      let segStart = regEnd;
+      tiers.forEach((t,i)=>{
+        // last tier lands exactly on the shift end, so rounding never leaves a gap
+        const segEnd = (i===tiers.length-1) ? re : addMin(segStart, Math.round(t.hrs*60));
+        styleDataRow(r); // identity columns intentionally left blank on the OT lines
+        ws.getCell(r,8).value=t.label;
+        [[9,segStart],[10,segEnd]].forEach(([c,tm])=>{ const cell=ws.getCell(r,c); cell.value=timeFrac(tm); cell.numFmt="h:mm AM/PM"; });
+        ws.getCell(r,11).value={formula:`(MOD(J${r}-I${r},1)*24)`};
+        ws.getCell(r,12).value=t.rate; ws.getCell(r,12).numFmt=MONEYFMT;
+        ws.getCell(r,15).value={formula:`SUM(N${r}*${a.mileRate})`}; ws.getCell(r,15).numFmt=MONEYFMT;
+        ws.getCell(r,16).value={formula:`SUM(K${r}*L${r})+M${r}+O${r}`}; ws.getCell(r,16).numFmt=MONEYFMT;
+        segStart = segEnd; r++;
+      });
     }
   }
   const lastCompleted=r-1;
@@ -1358,8 +1384,8 @@ function askPayload() {
   });
   const p = {
     month: `${MONTHS[S.month-1]} ${S.year}`,
-    rates: { regular: a.rate, overtime: a.otRate, mileagePerMile: a.mileRate, cancellationFee: a.cancFee },
-    rules: "Care.com: 4-hour minimum; California daily overtime over 8h at 1.5x; mileage only on miles over a 40-mile round trip; cancellations $30 flat over 24h notice, else up to 8h at the hourly rate.",
+    rates: { regular: a.rate, overtime: a.otRate, doubleTime: a.dtRate, mileagePerMile: a.mileRate, cancellationFee: a.cancFee },
+    rules: "Care.com: 4-hour minimum; California daily overtime over 8h at 1.5x and over 12h at 2x; mileage only on miles over a 40-mile round trip; cancellations $30 flat over 24h notice, else up to 8h at the hourly rate.",
     completedJobs: S.jobs.map(j => ({
       job: j.jid, date: j.date, start: j.start, end: j.end, hrs: +j.hrs.toFixed(2),
       caregiver: tok("cg", j.cg), client: tok("client", j.client),
